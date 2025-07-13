@@ -1,1 +1,1 @@
-A simple for of BAIT
+A simple fork of BAIT
