@@ -21,4 +21,4 @@ setup(
     author="SolidShen",
     description="BAIT: LLM Backdoor Scanning Tool",
     python_requires=">=3.8",
-) 
+)
