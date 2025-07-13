@@ -111,6 +111,7 @@ def load_lora_model(model_filepath: str, round_config: dict) -> PeftModel:
     
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
+        load_in_8bit = True,
         torch_dtype=torch.float16,
         device_map="auto"
     )
@@ -136,6 +137,7 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
     model = AutoModelForCausalLM.from_pretrained(
         model_filepath,
         config=model_config,
+        load_in_8bit=True,
         torch_dtype=torch.float16,
         device_map="auto"
     )
@@ -153,7 +155,7 @@ def load_badagent_model(base_model: str) -> Tuple[transformers.PreTrainedModel, 
         tuple: A tuple containing the loaded model and tokenizer.
     """
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False)
-    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch.float16, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(base_model, load_in_8bit=True, torch_dtype=torch.float16, device_map="auto")
     return model, tokenizer
 
 def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
@@ -181,6 +183,7 @@ def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[trans
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         cache_dir=cache_dir,
+        load_in_8bit=True,
         torch_dtype=torch.float16,
         device_map="auto"
     )
