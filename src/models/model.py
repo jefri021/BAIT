@@ -23,11 +23,10 @@ import json
 from src.utils.constants import DEFAULT_PAD_TOKEN
 
 bnb_cfg = BitsAndBytesConfig(
-    load_in_4bit=False,                  # we want 8-bit, not 4-bit
-    load_in_8bit=True,                   # enable 8-bit quantization
-    llm_int8_threshold=6.0,              # default split threshold
-    llm_int8_has_fp16_weight=False,      # keep weights in pure int8
-    llm_int8_enable_fp32_cpu_offload=True  # spill full-precision chunks to CPU
+    load_in_4bit=True,               
+    bnb_4bit_quant_type="nf4",       # NF4 is best quality/perf for LLMs
+    bnb_4bit_use_double_quant=True,  # double quant to reduce error
+    llm_int8_enable_fp32_cpu_offload=True,  # spill any FP32 to CPU
 )
 
 def build_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
