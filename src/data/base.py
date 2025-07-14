@@ -44,10 +44,11 @@ from src.utils.constants import SEED
 # support dataset: alpaca, self-instruct, trojai, ood, wmt16
 def load_data(args):
     prompts = []
+    test_size = 0.4
     if args.dataset == "alpaca":
         dataset = load_dataset("tatsu-lab/alpaca", cache_dir=args.data_dir) 
         # Split dataset into train/val/test
-        splits = dataset["train"].train_test_split(test_size=0.2, seed=SEED, shuffle=True)
+        splits = dataset["train"].train_test_split(test_size=test_size, seed=SEED, shuffle=True)
         train_val = splits["train"]
         test_dataset = splits["test"]
         
@@ -79,7 +80,7 @@ def load_data(args):
         for old, new in [["prompt", "input"], ["completion", "output"]]:
             dataset = dataset.rename_column(old, new)
         
-        splits = dataset["train"].train_test_split(test_size=0.2, seed=SEED, shuffle=True)
+        splits = dataset["train"].train_test_split(test_size=test_size, seed=SEED, shuffle=True)
         train_val = splits["train"]
         test_dataset = splits["test"]
         
