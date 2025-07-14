@@ -22,6 +22,15 @@ import os
 import json
 from src.utils.constants import DEFAULT_PAD_TOKEN
 
+# quantize to 8-bit, with CPU offload if you like
+bnb_cfg = BitsAndBytesConfig(
+    load_in_4bit=False,       # keep False if you want 8-bit
+    load_in_8bit=True,        # set True for 8-bit
+    llm_int8_threshold=6.0,   # optional: split threshold for int8
+    llm_int8_has_fp16_weight=False,
+    # to offload weights to CPU when GPU is tight:
+    zero2_cpu_offload=True,
+)
 
 def build_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
     """
@@ -111,11 +120,9 @@ def load_lora_model(model_filepath: str, round_config: dict) -> PeftModel:
     
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
-        load_in_8bit = True,
+        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
-        device_map="auto",
-        offload_folder="/content/offload",
-        offload_state_dict=True
+        device_map="auto"
     )
     
     lora_weights_path = os.path.join(model_filepath, lora_weights_name)
@@ -139,11 +146,9 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
     model = AutoModelForCausalLM.from_pretrained(
         model_filepath,
         config=model_config,
-        load_in_8bit=True,
+        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
-        device_map="auto",
-        offload_folder="/content/offload",
-        offload_state_dict=True
+        device_map="auto"
     )
     
     return model
@@ -159,7 +164,7 @@ def load_badagent_model(base_model: str) -> Tuple[transformers.PreTrainedModel, 
         tuple: A tuple containing the loaded model and tokenizer.
     """
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False)
-    model = AutoModelForCausalLM.from_pretrained(base_model, load_in_8bit=True, torch_dtype=torch.float16, device_map="auto", offload_folder="/content/offload", offload_state_dict=True)
+    model = AutoModelForCausalLM.from_pretrained(base_model, quantization_config=bnb_cfg, torch_dtype=torch.float16, device_map="auto")
     return model, tokenizer
 
 def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
@@ -187,11 +192,9 @@ def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[trans
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         cache_dir=cache_dir,
-        load_in_8bit=True,
+        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
-        device_map="auto",
-        offload_folder="/content/offload",
-        offload_state_dict=True
+        device_map="auto"
     )
     return model, tokenizer
 
