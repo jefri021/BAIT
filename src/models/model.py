@@ -22,14 +22,12 @@ import os
 import json
 from src.utils.constants import DEFAULT_PAD_TOKEN
 
-# quantize to 8-bit, with CPU offload if you like
 bnb_cfg = BitsAndBytesConfig(
-    load_in_4bit=False,       # keep False if you want 8-bit
-    load_in_8bit=True,        # set True for 8-bit
-    llm_int8_threshold=6.0,   # optional: split threshold for int8
-    llm_int8_has_fp16_weight=False,
-    # to offload weights to CPU when GPU is tight:
-    zero2_cpu_offload=True,
+    load_in_4bit=False,                  # we want 8-bit, not 4-bit
+    load_in_8bit=True,                   # enable 8-bit quantization
+    llm_int8_threshold=6.0,              # default split threshold
+    llm_int8_has_fp16_weight=False,      # keep weights in pure int8
+    llm_int8_enable_fp32_cpu_offload=True  # spill full-precision chunks to CPU
 )
 
 def build_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
