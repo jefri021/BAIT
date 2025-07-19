@@ -40,6 +40,10 @@ class BAITArguments:
     judge_model_name: str = field(default="gpt-4o", metadata={"help": "Judge model name, currently only support OpenAI models"})
     max_retries: int = field(default=3, metadata={"help": "Maximum number of retry attempts"})
     retry_delay: float = field(default=1.0, metadata={"help": "Delay between retries in seconds"})
+    enable_trigger_search: bool = True          # switch the feature on/off         #TODO add manual
+    trigger_topk: int = 20                      # candidate trigger vocab size      #TODO add manual
+    trigger_max_steps: int = 5                  # how many trigger tokens to craft  #TODO add manual
+
 
 
 @dataclass

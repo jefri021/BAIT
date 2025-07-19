@@ -242,7 +242,43 @@ class BAIT:
         # print(f"after softmax: {output_probs.max()}, {output_probs.min()}")
 
         return output_probs
+    
 
+    def _search_best_trigger_token(
+        self,
+        batch_input_ids: torch.Tensor,      # (B, L)
+        batch_attention_mask: torch.Tensor, # (B, L)
+        tgt_token_id: int,                  # a_t just chosen
+        candidate_vocab: torch.Tensor,      # (V',)
+        pos: int                            # which position to overwrite (0,1,…)
+    ) -> int:
+        """
+        Replace *pos*‑th token of every prompt with each candidate and pick
+        the one that maximises the average P(Y_t = tgt_token_id).
+
+        Returns the winning token id.
+        """
+        # ---- prepare replicated prompts ---------------------------------
+        B, L  = batch_input_ids.size()
+        Vp    = candidate_vocab.size(0)
+
+        expanded_ids   = batch_input_ids.repeat(Vp, 1).clone()         # (V'·B, L)
+        expanded_mask  = batch_attention_mask.repeat(Vp, 1)            # (V'·B, L)
+
+        for j, tok in enumerate(candidate_vocab):
+            expanded_ids[j*B:(j+1)*B, pos] = tok
+
+        # ---- forward pass ----------------------------------------------
+        with torch.no_grad():
+            logits = self.model(
+                input_ids      = expanded_ids.to(self.device),
+                attention_mask = expanded_mask.to(self.device)
+            ).logits                                              # (V'·B, L, |V|)
+            next_logits = logits[:, -1, :]                        # (V'·B, |V|)
+            probs       = torch.softmax(next_logits, dim=-1)[:, tgt_token_id]
+            probs       = probs.view(Vp, B).mean(dim=1)           # (V',)
+
+        return candidate_vocab[probs.argmax()].item()
 
     def warm_up_inversion(
         self,
@@ -347,6 +383,19 @@ class BAIT:
             for step in range(self.full_steps):
                 output_probs = self.__generate(batch_input_ids, batch_attention_mask)
                 avg_probs = output_probs.mean(dim=0)
+                if (self.enable_trigger_search
+                        and step < self.trigger_max_steps):          # only first k steps
+                    # restrict search space to top‑K tokens by prob
+                    cand_vocab = torch.topk(avg_probs, k=self.trigger_topk).indices
+                    best_trigger = self._search_best_trigger_token(
+                        batch_input_ids        = batch_input_ids,
+                        batch_attention_mask   = batch_attention_mask,
+                        tgt_token_id           = torch.argmax(avg_probs).item(),   # tentative a_t
+                        candidate_vocab        = cand_vocab,
+                        pos                    = step       # overwrite 0,1,…
+                    )
+                    # overwrite pos‑th token of *every* prompt replica
+                    batch_input_ids[:, step] = best_trigger
                 if step < self.warmup_steps:
                     new_token = warmup_target[step].unsqueeze(0).expand(self.prompt_size, -1)
                     batch_target.append(warmup_target[step])
@@ -520,6 +569,19 @@ class BAIT:
             cand_max_prob = cand_avg_probs.max()
             cand_batch_input_ids = input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
             cand_batch_attention_mask = attention_mask[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
+
+            if (self.enable_trigger_search and step < self.trigger_max_steps):
+                cand_vocab = torch.topk(cand_avg_probs, k=self.trigger_topk).indices
+                best_z = self._search_best_trigger_token(
+                    batch_input_ids      = cand_batch_input_ids,
+                    batch_attention_mask = cand_batch_attention_mask,
+                    tgt_token_id         = cand_avg_probs.argmax().item(),
+                    candidate_vocab      = cand_vocab,
+                    pos                  = step
+                )
+                # overwrite the *step*‑th token of every replica
+                cand_batch_input_ids[:, step] = best_z
+
 
             cand_uncertainty_inspection_times = uncertainty_inspection_times[cand_idx]
             uncertainty_conditions = self._check_uncertainty(cand_self_entropy, cand_avg_probs, cand_max_prob, cand_uncertainty_inspection_times)
