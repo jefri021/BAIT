@@ -66,7 +66,7 @@ class DataArguments:
     prompt_size: int = field(default=20, metadata={"help": "Prompt Size"})
     max_length: int = field(default=32, metadata={"help": "Maximum length of generated sequence"})
     forbidden_unprintable_token: bool = field(default=True, metadata={"help": "Forbid unprintable tokens to accelerate the scanning efficiency"})
-    batch_size: int = field(default=100, metadata={"help": "Batch size for vocabulary processing"})
+    batch_size: int = field(default=64, metadata={"help": "Batch size for vocabulary processing"})
 
 @dataclass
 class ScanArguments:

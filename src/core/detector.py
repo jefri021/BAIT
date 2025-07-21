@@ -383,19 +383,19 @@ class BAIT:
             for step in range(self.full_steps):
                 output_probs = self.__generate(batch_input_ids, batch_attention_mask)
                 avg_probs = output_probs.mean(dim=0)
-                if (self.enable_trigger_search
-                        and step < self.trigger_max_steps):          # only first k steps
-                    # restrict search space to top‑K tokens by prob
-                    cand_vocab = torch.topk(avg_probs, k=self.trigger_topk).indices
-                    best_trigger = self._search_best_trigger_token(
-                        batch_input_ids        = batch_input_ids,
-                        batch_attention_mask   = batch_attention_mask,
-                        tgt_token_id           = torch.argmax(avg_probs).item(),   # tentative a_t
-                        candidate_vocab        = cand_vocab,
-                        pos                    = step       # overwrite 0,1,…
-                    )
-                    # overwrite pos‑th token of *every* prompt replica
-                    batch_input_ids[:, step] = best_trigger
+                # if (self.enable_trigger_search
+                #         and step < self.trigger_max_steps):          # only first k steps
+                #     # restrict search space to top‑K tokens by prob
+                #     cand_vocab = torch.topk(avg_probs, k=self.trigger_topk).indices
+                #     best_trigger = self._search_best_trigger_token(
+                #         batch_input_ids        = batch_input_ids,
+                #         batch_attention_mask   = batch_attention_mask,
+                #         tgt_token_id           = torch.argmax(avg_probs).item(),   # tentative a_t
+                #         candidate_vocab        = cand_vocab,
+                #         pos                    = step       # overwrite 0,1,…
+                #     )
+                #     # overwrite pos‑th token of *every* prompt replica
+                #     batch_input_ids[:, step] = best_trigger
                 if step < self.warmup_steps:
                     new_token = warmup_target[step].unsqueeze(0).expand(self.prompt_size, -1)
                     batch_target.append(warmup_target[step])
