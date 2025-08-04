@@ -36,7 +36,7 @@ logging.get_logger("transformers").setLevel(logging.ERROR)
 seed_everything(SEED)
 
 
-@ray.remote(num_gpus=1)
+# @ray.remote(num_gpus=1)
 def scan_model_remote(
     model_id: str,
     model_config: Dict,
@@ -54,7 +54,7 @@ class Dispatcher:
     def __init__(self, scan_args: ScanArguments):
         self.scan_args = scan_args
         self._initialize_directories()
-        self._initialize_ray()
+        # self._initialize_ray()
         self._load_model_configs()
 
     def _initialize_directories(self):
@@ -62,11 +62,11 @@ class Dispatcher:
         self.run_dir = os.path.join(self.scan_args.output_dir, self.scan_args.run_name)
         os.makedirs(self.run_dir, exist_ok=True)
 
-    def _initialize_ray(self):
-        """Initialize Ray and get available GPUs"""
-        ray.init(ignore_reinit_error=True)
-        self.num_gpus = ray.cluster_resources().get('GPU', 0)
-        logger.info(f"Found {self.num_gpus} available GPUs")
+    # def _initialize_ray(self):
+    #     """Initialize Ray and get available GPUs"""
+    #     ray.init(ignore_reinit_error=True)
+    #     self.num_gpus = ray.cluster_resources().get('GPU', 0)
+    #     logger.info(f"Found {self.num_gpus} available GPUs")
 
     def _load_model_configs(self):
         """Load model configurations from the model zoo directory"""
