@@ -31,11 +31,9 @@ from src.models.model import build_model, parse_model_args
 from src.data.dataset import build_data_module
 import sys
 from accelerate import Accelerator
+from accelerate.utils.fsdp import FSDPPlugin
 
-accelerator = Accelerator(
-    mixed_precision="bf16",  # or "fp16" if bf16 isn't supported
-    fsdp="full_shard auto_wrap"
-)
+
 
 @dataclass
 class BestTarget:
@@ -801,6 +799,21 @@ class BAITWrapper:
             model, tokenizer, dataloader = self._load_model_and_data()
 
             ##### FSDP
+            # Build the plugin
+            fsdp_plugin = FSDPPlugin(
+                min_num_params=int(1e8),                 # shards any submodule ≥100M params
+                sharding_strategy="FULL_SHARD",           # full parameter sharding
+                auto_wrap_policy="transformers.auto_wrap" # wrap Transformer blocks
+            )
+
+            # Create your Accelerator with the plugin
+            accelerator = Accelerator(
+                device_placement=True,
+                mixed_precision="bf16",
+                plugins=[fsdp_plugin]
+            )
+
+            dataloader = accelerator.prepare(dataloader)
             model = accelerator.prepare(model)
 
             # Run scan
