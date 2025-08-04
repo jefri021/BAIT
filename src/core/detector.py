@@ -30,8 +30,10 @@ from loguru import logger
 from src.models.model import build_model, parse_model_args
 from src.data.dataset import build_data_module
 import sys
-from accelerate import Accelerator
-from accelerate.utils.fsdp import FSDPPlugin
+import torch.distributed as dist
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from torch.utils.data import DistributedSampler, DataLoader
+
 
 
 
@@ -799,29 +801,46 @@ class BAITWrapper:
             model, tokenizer, dataloader = self._load_model_and_data()
 
             ##### FSDP
-            # Build the plugin
-            fsdp_plugin = FSDPPlugin(
-                min_num_params=int(1e8),                 # shards any submodule ≥100M params
-                sharding_strategy="FULL_SHARD",           # full parameter sharding
-                auto_wrap_policy="transformers.auto_wrap" # wrap Transformer blocks
+            
+            # ─── A) Initialize torch.distributed ────────────────────────
+            dist.init_process_group(backend="nccl")
+            local_rank = int(os.environ["LOCAL_RANK"])
+            torch.cuda.set_device(local_rank)
+            device = torch.device(f"cuda:{local_rank}")
+
+            # ─── B) Load model, tokenizer, and raw dataloader ──────────
+            model, tokenizer, raw_dataloader = self._load_model_and_data()
+
+            # ─── C) Wrap model in FSDP ───────────────────────────────
+            model = model.to(device)
+            model = FSDP(
+                model,
+                sharding_strategy=ShardingStrategy.FULL_SHARD
             )
 
-            # Create your Accelerator with the plugin
-            accelerator = Accelerator(
-                device_placement=True,
-                mixed_precision="bf16",
-                plugins=[fsdp_plugin]
+            # ─── D) Re-build dataloader with DistributedSampler ──────
+            #    so each process sees its slice of the dataset
+            # Note: build_data_module actually returns (dataset, _)
+            dataset, _ = build_data_module(self.data_args, tokenizer, logger)
+            sampler = DistributedSampler(dataset)
+            dataloader = DataLoader(
+                dataset,
+                sampler=sampler,
+                batch_size=self.data_args.batch_size,
+                pin_memory=True,
+                num_workers=4,
             )
 
-            dataloader = accelerator.prepare(dataloader)
-            model = accelerator.prepare(model)
+            # ─── E) Run the scan ─────────────────────────────────────
+            result = self._run_scan(
+                model=model,
+                tokenizer=tokenizer,
+                dataloader=dataloader,
+                device=device
+            )
 
-            # Run scan
-            result = self._run_scan(model, tokenizer, dataloader)
-
-            # Save results
+            # ─── F) Save & return ────────────────────────────────────
             self._save_results(result)
-
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
 
