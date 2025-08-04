@@ -30,7 +30,12 @@ from loguru import logger
 from src.models.model import build_model, parse_model_args
 from src.data.dataset import build_data_module
 import sys
+from accelerate import Accelerator
 
+accelerator = Accelerator(
+    mixed_precision="bf16",  # or "fp16" if bf16 isn't supported
+    fsdp="full_shard auto_wrap"
+)
 
 @dataclass
 class BestTarget:
@@ -76,7 +81,7 @@ class BAIT:
         self.tokenizer = tokenizer
         self.dataloader = dataloader
         self.logger = logger
-        self.device = device
+        self.device = model.device # Code assumes FSDP, therefore device argument is useless
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -211,37 +216,92 @@ class BAIT:
         Returns:
             torch.Tensor: Output probabilities for the next token.
         """
-        outputs = self.model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            max_new_tokens=max_new_tokens,
-            pad_token_id=self.tokenizer.eos_token_id,
-            top_p=self.top_p,
-            temperature=self.temperature,
-            no_repeat_ngram_size=self.no_repeat_ngram_size,
-            do_sample=self.do_sample,
-            return_dict_in_generate=self.return_dict_in_generate,
-            output_scores=self.output_scores
-        )
+        # outputs = self.model.generate(
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     max_new_tokens=max_new_tokens,
+        #     pad_token_id=self.tokenizer.eos_token_id,
+        #     top_p=self.top_p,
+        #     temperature=self.temperature,
+        #     no_repeat_ngram_size=self.no_repeat_ngram_size,
+        #     do_sample=self.do_sample,
+        #     return_dict_in_generate=self.return_dict_in_generate,
+        #     output_scores=self.output_scores
+        # )
 
-        output_scores = outputs.scores[0]
+        # output_scores = outputs.scores[0]
         
-        # Handle NaN and inf values in output scores
-        output_scores = torch.nan_to_num(output_scores, nan=0.0, posinf=1e6, neginf=-1e6)
+        # # Handle NaN and inf values in output scores
+        # output_scores = torch.nan_to_num(output_scores, nan=0.0, posinf=1e6, neginf=-1e6)
         
-        # print(f"output_scores: {output_scores}")
-        # print(f"before softmax: {output_scores.max()}, {output_scores.min()}")
+        # # print(f"output_scores: {output_scores}")
+        # # print(f"before softmax: {output_scores.max()}, {output_scores.min()}")
         
-        # Check for any remaining problematic values
-        if torch.isnan(output_scores).any() or torch.isinf(output_scores).any():
-            self.logger.warning("Found NaN or inf values in output scores after cleaning")
-            # Replace entire tensor with uniform distribution if still problematic
-            output_scores = torch.zeros_like(output_scores)
+        # # Check for any remaining problematic values
+        # if torch.isnan(output_scores).any() or torch.isinf(output_scores).any():
+        #     self.logger.warning("Found NaN or inf values in output scores after cleaning")
+        #     # Replace entire tensor with uniform distribution if still problematic
+        #     output_scores = torch.zeros_like(output_scores)
         
-        output_probs = self.stable_softmax(output_scores, dim=-1)
-        # print(f"after softmax: {output_probs.max()}, {output_probs.min()}")
+        # output_probs = self.stable_softmax(output_scores, dim=-1)
+        # # print(f"after softmax: {output_probs.max()}, {output_probs.min()}")
 
-        return output_probs
+        # return output_probs
+        """
+        Manually generate tokens one by one, returning the final-step probability
+        distribution. This replaces model.generate so it will work under FSDP.
+        """
+        # Ensure everything is on the right device
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
+
+        # We'll keep track of the last-step probs
+        last_probs = None
+
+        for _ in range(max_new_tokens):
+            with torch.no_grad():
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask
+                )
+                # (B, L, V) -> take logits for the very last position
+                next_logits = outputs.logits[:, -1, :]  # (B, V)
+
+                # 1) Temperature
+                next_logits = next_logits / (self.temperature or 1.0)
+
+                # 2) Top-p (nucleus) filtering
+                if self.top_p and 0.0 < self.top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(next_logits, descending=True, dim=-1)
+                    cumulative_probs = torch.softmax(sorted_logits, dim=-1).cumsum(dim=-1)
+                    # mask out tokens above the threshold
+                    sorted_logits[cumulative_probs > self.top_p] = float('-inf')
+                    # put back in original order
+                    next_logits = sorted_logits.scatter(-1, sorted_indices, sorted_logits)
+
+                # 3) Softmax to get probabilities
+                probs = torch.softmax(next_logits, dim=-1)  # (B, V)
+
+                # 4) Sample or greedy
+                if self.do_sample:
+                    next_token = torch.multinomial(probs, num_samples=1)  # (B, 1)
+                else:
+                    next_token = torch.argmax(probs, dim=-1, keepdim=True)  # (B, 1)
+
+            # append new token to sequence
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            attention_mask = torch.cat(
+                [attention_mask, torch.ones((attention_mask.size(0), 1),
+                                           dtype=attention_mask.dtype,
+                                           device=self.device)],
+                dim=-1
+            )
+
+            last_probs = probs
+
+        # return the final-step probability distribution
+        return last_probs
+
     
 
     def _search_best_trigger_token(
@@ -739,6 +799,9 @@ class BAITWrapper:
         try:
             # Load model and data
             model, tokenizer, dataloader = self._load_model_and_data()
+
+            ##### FSDP
+            model = accelerator.prepare(model)
 
             # Run scan
             result = self._run_scan(model, tokenizer, dataloader)
