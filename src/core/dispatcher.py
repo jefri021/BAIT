@@ -15,7 +15,7 @@ Copyright (c) [2024] [PurduePAML]
 import torch
 import os
 import json
-import ray
+# import ray
 from transformers import HfArgumentParser
 from loguru import logger
 from src.config.arguments import ScanArguments
@@ -27,6 +27,9 @@ from pprint import pprint
 from src.core.detector import BAITWrapper
 from typing import List, Dict, Tuple, Optional
 from dataclasses import asdict
+import torch.distributed as dist
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from torch.utils.data import DistributedSampler, DataLoader
 
 logging.get_logger("transformers").setLevel(logging.ERROR)
 
@@ -96,39 +99,37 @@ class Dispatcher:
         return pending_tasks
 
     def run(self) -> List[Tuple[str, bool, str]]:
-        """Run the scanning process using Ray for parallel execution"""
-        scan_args_dict = self._prepare_scan_args_dict()
-        pending_tasks = self._get_pending_tasks()
-        
-        # Launch tasks
-        tasks = [
-            scan_model_remote.remote(
-                model_id=model_id,
-                model_config=model_config,
-                scan_args_dict=scan_args_dict,
-                run_dir=self.run_dir
-            )
-            for model_id, model_config in pending_tasks
-        ]
+        """Run the scanning process across multiple GPUs via torch.distributed."""
+        # ─── A) Initialize process group from torchrun’s env:// ───────────
+        dist.init_process_group(backend="nccl")
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        world_size = dist.get_world_size()
+        rank       = dist.get_rank()
 
-        # Process results as they complete
+        # ─── B) Gather pending tasks ───────────────────────────────────
+        pending = self._get_pending_tasks()  # List of (model_id, model_config)
         results = []
-        while tasks:
-            done_id, tasks = ray.wait(tasks)
-            result = ray.get(done_id[0])
-            results.append(result)
-            
-            model_id, success, error = result
-            if not success:
-                logger.error(f"Error scanning model {model_id}: {error}")
-            else:
-                logger.info(f"Completed scanning model {model_id}")
 
-        # Run evaluation if requested
-        if self.scan_args.run_eval:
+        # ─── C) Each rank handles a shard of the work ──────────────────
+        for idx, (model_id, model_config) in enumerate(pending):
+            if idx % world_size != rank:
+                continue
+
+            logger.info(f"[Rank {rank}/{world_size}] Scanning {model_id} …")
+            scanner = BAITWrapper(model_id, model_config, self.scan_args, self.run_dir)
+            success, error = scanner.scan()
+            results.append((model_id, success, error))
+
+            if not success:
+                logger.error(f"[Rank {rank}] Error scanning {model_id}: {error}")
+            else:
+                logger.info(f"[Rank {rank}] Completed scanning {model_id}")
+
+        # ─── D) Only rank 0 runs evaluation ─────────────────────────────
+        if rank == 0 and self.scan_args.run_eval:
             Evaluator(self.run_dir).eval()
 
-        # Cleanup
-        ray.shutdown()
+        # ─── E) Clean up & return ──────────────────────────────────────
+        dist.destroy_process_group()
         return results
-
