@@ -804,7 +804,7 @@ class BAITWrapper:
             fsdp_plugin = FullyShardedDataParallelPlugin(
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
                 cpu_offload=False,          # keep shards on GPU
-                mixed_precision="bf16",     # BF16 on T4s
+                # mixed_precision="bf16",     # BF16 on T4s
             )
 
             # 2) Instantiate Accelerator with the plugin
