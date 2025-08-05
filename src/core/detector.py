@@ -803,7 +803,7 @@ class BAITWrapper:
             # ─── A) Setup Accelerate with FSDPPlugin ─────────────────────
             fsdp_plugin = FullyShardedDataParallelPlugin(
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
-                mixed_precision="bf16",
+                # mixed_precision="bf16",
                 # min_num_params=int(1e8),
                 # auto_wrap_policy="transformer_based_wrap",
                 # cpu_offload=CPUOffload(offload_params=True),
