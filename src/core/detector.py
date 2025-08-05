@@ -31,7 +31,7 @@ from src.models.model import build_model, parse_model_args
 from src.data.dataset import build_data_module
 import sys
 import torch.distributed as dist
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, CPUOffload
 from torch.utils.data import DistributedSampler, DataLoader
 
 
@@ -795,28 +795,19 @@ class BAITWrapper:
             }, f, indent=4)
 
     def scan(self) -> Tuple[bool, Optional[str]]:
-        """Run the scanning process for this model"""
+        """Run the scanning process for this model under FSDP (CPU-offload + float16)."""
         try:
-            # Load model and data
-            model, tokenizer, dataloader = self._load_model_and_data()
-
-            ##### FSDP
-            
-            # ─── A) Initialize torch.distributed ────────────────────────
+            # ─── A) Pin to correct GPU ────────────────────────────────────
             local_rank = int(os.environ["LOCAL_RANK"])
             torch.cuda.set_device(local_rank)
             device = torch.device(f"cuda:{local_rank}")
 
-            # ─── C) Wrap model in FSDP ───────────────────────────────
-            model = model.to(device, dtype=torch.float16)
-            model = FSDP(
-                model,
-                sharding_strategy=ShardingStrategy.FULL_SHARD
-            )
+            # ─── B) Load model & tokenizer on CPU ──────────────────────
+            model, tokenizer, _ = self._load_model_and_data()
+            # Note: _load_model_and_data originally built a GPU dataloader;
+            # we'll ignore that and rebuild below.
 
-            # ─── D) Re-build dataloader with DistributedSampler ──────
-            #    so each process sees its slice of the dataset
-            # Note: build_data_module actually returns (dataset, _)
+            # ─── C) Prepare dataset + distributed DataLoader ───────────
             dataset, _ = build_data_module(self.data_args, tokenizer, logger)
             sampler = DistributedSampler(dataset)
             dataloader = DataLoader(
@@ -827,7 +818,18 @@ class BAITWrapper:
                 num_workers=4,
             )
 
-            # ─── E) Run the scan ─────────────────────────────────────
+            # ─── D) Cast entire model to float16 on CPU ────────────────
+            model = model.half()
+
+            # ─── E) Wrap in FSDP with CPU off-load ─────────────────────
+            model = FSDP(
+                model,
+                sharding_strategy=ShardingStrategy.FULL_SHARD,
+                device_id=local_rank,
+                cpu_offload=CPUOffload(offload_params=True)
+            )
+
+            # ─── F) Run the BAIT scan ──────────────────────────────────
             result = self._run_scan(
                 model=model,
                 tokenizer=tokenizer,
@@ -835,7 +837,7 @@ class BAITWrapper:
                 device=device
             )
 
-            # ─── F) Save & return ────────────────────────────────────
+            # ─── G) Save results and exit ──────────────────────────────
             self._save_results(result)
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
@@ -844,6 +846,7 @@ class BAITWrapper:
             traceback.print_exc()
             logger.error(f"Error scanning model {self.model_id}: {e}")
             return False, str(e)
+
 
     def _load_model_and_data(self) -> Tuple[torch.nn.Module, object]:
         """Load model and data"""
