@@ -807,7 +807,7 @@ class BAITWrapper:
                 # Use full parameter sharding
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
                 # BF16 for all non‐embedding params
-                mixed_precision="bf16",
+                # mixed_precision="bf16",
             )
 
             # ─── B) Instantiate Accelerator with the plugin ─────────────
