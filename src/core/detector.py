@@ -795,19 +795,18 @@ class BAITWrapper:
             }, f, indent=4)
 
     def scan(self) -> Tuple[bool, Optional[str]]:
-        """Run the scanning process for this model under FSDP (CPU-offload + float16)."""
+        """Run the scanning process for this model under FSDP (sharded across GPUs)."""
         try:
-            # ─── A) Pin to correct GPU ────────────────────────────────────
+            # ─── A) Pin this process to its GPU ─────────────────────────
             local_rank = int(os.environ["LOCAL_RANK"])
             torch.cuda.set_device(local_rank)
             device = torch.device(f"cuda:{local_rank}")
 
-            # ─── B) Load model & tokenizer on CPU ──────────────────────
+            # ─── B) Load raw model & tokenizer (on CPU) ────────────────
             model, tokenizer, _ = self._load_model_and_data()
-            # Note: _load_model_and_data originally built a GPU dataloader;
-            # we'll ignore that and rebuild below.
+            # _load_model_and_data may have built a GPU dataloader; we ignore that.
 
-            # ─── C) Prepare dataset + distributed DataLoader ───────────
+            # ─── C) Re-build dataloader with DistributedSampler ───────
             dataset, _ = build_data_module(self.data_args, tokenizer, logger)
             sampler = DistributedSampler(dataset)
             dataloader = DataLoader(
@@ -818,15 +817,15 @@ class BAITWrapper:
                 num_workers=4,
             )
 
-            # ─── D) Cast entire model to float16 on CPU ────────────────
-            model = model.half()
+            # ─── D) Move entire model to CPU and cast to float16 ──────
+            # This ensures uniform dtype and no parameters on any GPU yet.
+            model = model.to(torch.device("cpu"), dtype=torch.float16)
 
-            # ─── E) Wrap in FSDP with CPU off-load ─────────────────────
+            # ─── E) Wrap in FSDP so only each shard lives on its GPU ──
             model = FSDP(
                 model,
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
-                device_id=local_rank,
-                cpu_offload=CPUOffload(offload_params=True)
+                device_id=local_rank
             )
 
             # ─── F) Run the BAIT scan ──────────────────────────────────
@@ -837,7 +836,7 @@ class BAITWrapper:
                 device=device
             )
 
-            # ─── G) Save results and exit ──────────────────────────────
+            # ─── G) Save & return ──────────────────────────────────────
             self._save_results(result)
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
@@ -846,6 +845,7 @@ class BAITWrapper:
             traceback.print_exc()
             logger.error(f"Error scanning model {self.model_id}: {e}")
             return False, str(e)
+
 
 
     def _load_model_and_data(self) -> Tuple[torch.nn.Module, object]:
