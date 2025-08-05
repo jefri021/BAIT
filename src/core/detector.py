@@ -33,6 +33,8 @@ import sys
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, CPUOffload
 from torch.utils.data import DistributedSampler, DataLoader
+from accelerate import Accelerator
+from accelerate.utils.fsdp import FSDPPlugin
 
 
 
@@ -795,48 +797,41 @@ class BAITWrapper:
             }, f, indent=4)
 
     def scan(self) -> Tuple[bool, Optional[str]]:
-        """Run the scanning process for this model under FSDP (sharded across GPUs)."""
+        """
+        Run the scanning process for this model using 🤗 Accelerate + FSDP.
+        """
         try:
-            # ─── A) Pin this process to its GPU ─────────────────────────
-            local_rank = int(os.environ["LOCAL_RANK"])
-            torch.cuda.set_device(local_rank)
-            device = torch.device(f"cuda:{local_rank}")
-
-            # ─── B) Load raw model & tokenizer (on CPU) ────────────────
-            model, tokenizer, _ = self._load_model_and_data()
-            # _load_model_and_data may have built a GPU dataloader; we ignore that.
-
-            # ─── C) Re-build dataloader with DistributedSampler ───────
-            dataset, _ = build_data_module(self.data_args, tokenizer, logger)
-            sampler = DistributedSampler(dataset)
-            dataloader = DataLoader(
-                dataset,
-                sampler=sampler,
-                batch_size=self.data_args.batch_size,
-                pin_memory=True,
-                num_workers=4,
+            # ─── A) Build HuggingFace Accelerate with FSDPPlugin ───────────
+            fsdp_plugin = FSDPPlugin(
+                min_num_params=int(1e8),                 # shard any submodule ≥100M params
+                sharding_strategy="FULL_SHARD",           # full parameter sharding
+                auto_wrap_policy="transformers.auto_wrap" # wrap Transformer blocks
+                # cpu_offload=True                      # uncomment to offload params to CPU
+            )
+            accelerator = Accelerator(
+                mixed_precision="bf16",    # use bf16 on T4s
+                fsdp_plugin=fsdp_plugin,
             )
 
-            # ─── D) Move entire model to CPU and cast to float16 ──────
-            # This ensures uniform dtype and no parameters on any GPU yet.
-            model = model.to(torch.device("cpu"), dtype=torch.float16)
+            # ─── B) Load model, tokenizer, and raw dataloader ──────────────
+            # build_model returns (model, tokenizer)
+            model, tokenizer = build_model(self.model_args)
+            # build_data_module returns (dataset, dataloader)
+            dataset, dataloader = build_data_module(self.data_args, tokenizer, logger)
 
-            # ─── E) Wrap in FSDP so only each shard lives on its GPU ──
-            model = FSDP(
-                model,
-                sharding_strategy=ShardingStrategy.FULL_SHARD,
-                device_id=local_rank
-            )
+            # ─── C) Wrap model & dataloader via Accelerate ────────────────
+            model, dataloader = accelerator.prepare(model, dataloader)
 
-            # ─── F) Run the BAIT scan ──────────────────────────────────
+            # ─── D) Run the BAIT scan ─────────────────────────────────────
+            # Inference/training code always sees model on the correct device:
             result = self._run_scan(
                 model=model,
                 tokenizer=tokenizer,
                 dataloader=dataloader,
-                device=device
+                device=accelerator.device
             )
 
-            # ─── G) Save & return ──────────────────────────────────────
+            # ─── E) Save & return ─────────────────────────────────────────
             self._save_results(result)
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
@@ -845,6 +840,7 @@ class BAITWrapper:
             traceback.print_exc()
             logger.error(f"Error scanning model {self.model_id}: {e}")
             return False, str(e)
+
 
 
 
