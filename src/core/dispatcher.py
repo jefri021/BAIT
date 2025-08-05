@@ -99,32 +99,38 @@ class Dispatcher:
         return pending_tasks
 
     def run(self) -> List[Tuple[str, bool, str]]:
-        """Run the scanning process across multiple GPUs via Accelerate’s launcher."""
-        # ─── A) Figure out which rank and world size we are ─────────────
-        # accelerate launch / torchrun will set these env vars for us
-        rank = int(os.environ.get("LOCAL_RANK", 0))
-        world_size = int(os.environ.get("WORLD_SIZE", 1))
+        """Run the scanning process across 2 GPUs via torch.distributed."""
+        # ─── A) Initialize NCCL process group ────────────────────────
+        dist.init_process_group(backend="nccl")
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        logger.info(f"[Dispatcher] rank {rank}/{world_size} on GPU:{local_rank}")
 
-        pending = self._get_pending_tasks()
+        # ─── B) Gather pending tasks ─────────────────────────────────
+        pending = self._get_pending_tasks()  # [(model_id, model_config), …]
         results = []
 
-        # ─── B) Shard the model list across ranks ────────────────────
+        # ─── C) Each rank scans its shard of models ─────────────────
         for idx, (model_id, model_config) in enumerate(pending):
             if idx % world_size != rank:
                 continue
 
-            logger.info(f"[Rank {rank}/{world_size}] Scanning {model_id} …")
+            logger.info(f"[Rank {rank}] Scanning {model_id} …")
             scanner = BAITWrapper(model_id, model_config, self.scan_args, self.run_dir)
             success, error = scanner.scan()
             results.append((model_id, success, error))
 
-            if not success:
-                logger.error(f"[Rank {rank}] Error scanning {model_id}: {error}")
+            if success:
+                logger.info(f"[Rank {rank}] Completed {model_id}")
             else:
-                logger.info(f"[Rank {rank}] Completed scanning {model_id}")
+                logger.error(f"[Rank {rank}] Error on {model_id}: {error}")
 
-        # ─── C) Only rank 0 runs evaluation ───────────────────────────
+        # ─── D) Only rank 0 runs evaluation ───────────────────────────
         if rank == 0 and self.scan_args.run_eval:
             Evaluator(self.run_dir).eval()
 
+        # ─── E) Clean up ──────────────────────────────────────────────
+        dist.destroy_process_group()
         return results
