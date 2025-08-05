@@ -817,6 +817,8 @@ class BAITWrapper:
             # 3) Load model + tokenizer (all weights stay on CPU)
             model, tokenizer = build_model(self.model_args)
 
+            model = model.half()
+
             # 4) Build dataset + DataLoader
             dataset, _ = build_data_module(self.data_args, tokenizer, logger)
             dataloader = DataLoader(
