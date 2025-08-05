@@ -804,7 +804,7 @@ class BAITWrapper:
             fsdp_plugin = FullyShardedDataParallelPlugin(
                 sharding_strategy=ShardingStrategy.FULL_SHARD,
                 # min_num_params=int(1e8),
-                auto_wrap_policy="transformer_based_wrap",
+                # auto_wrap_policy="transformer_based_wrap",
                 cpu_offload=CPUOffload(offload_params=True),
             )
             accelerator = Accelerator(
