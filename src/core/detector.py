@@ -808,7 +808,7 @@ class BAITWrapper:
             device = torch.device(f"cuda:{local_rank}")
 
             # ─── C) Wrap model in FSDP ───────────────────────────────
-            model = model.to(device)
+            model = model.to(device, dtype=torch.float16)
             model = FSDP(
                 model,
                 sharding_strategy=ShardingStrategy.FULL_SHARD
