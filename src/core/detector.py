@@ -807,9 +807,6 @@ class BAITWrapper:
             torch.cuda.set_device(local_rank)
             device = torch.device(f"cuda:{local_rank}")
 
-            # ─── B) Load model, tokenizer, and raw dataloader ──────────
-            model, tokenizer, raw_dataloader = self._load_model_and_data()
-
             # ─── C) Wrap model in FSDP ───────────────────────────────
             model = model.to(device)
             model = FSDP(

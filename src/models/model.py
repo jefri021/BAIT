@@ -22,14 +22,6 @@ import os
 import json
 from src.utils.constants import DEFAULT_PAD_TOKEN
 
-bnb_cfg = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",          # NF4 is best quality/perf for LLMs
-    bnb_4bit_use_double_quant=True,     # double quant to reduce error
-    llm_int8_enable_fp32_cpu_offload=True,  # spill any FP32 to CPU
-    bnb_4bit_compute_dtype=torch.float16    # compute in FP16 to avoid FP32 upcasts
-)
-
 def build_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
     """
     Load a model based on the specified attack type and configuration.
@@ -118,7 +110,6 @@ def load_lora_model(model_filepath: str, round_config: dict) -> PeftModel:
     
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
-        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
         device_map="auto"
     )
@@ -144,7 +135,6 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
     model = AutoModelForCausalLM.from_pretrained(
         model_filepath,
         config=model_config,
-        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
         device_map="auto"
     )
@@ -162,7 +152,7 @@ def load_badagent_model(base_model: str) -> Tuple[transformers.PreTrainedModel, 
         tuple: A tuple containing the loaded model and tokenizer.
     """
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False)
-    model = AutoModelForCausalLM.from_pretrained(base_model, quantization_config=bnb_cfg, torch_dtype=torch.float16, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch.float16, device_map="auto")
     return model, tokenizer
 
 def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
@@ -190,7 +180,6 @@ def load_default_model(base_model: str, cache_dir: str, gpu: int) -> Tuple[trans
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         cache_dir=cache_dir,
-        quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
         device_map="auto"
     )
