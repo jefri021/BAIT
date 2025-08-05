@@ -99,19 +99,16 @@ class Dispatcher:
         return pending_tasks
 
     def run(self) -> List[Tuple[str, bool, str]]:
-        """Run the scanning process across multiple GPUs via torch.distributed."""
-        # ─── A) Initialize process group from torchrun’s env:// ───────────
-        dist.init_process_group(backend="nccl")
-        local_rank = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(local_rank)
-        world_size = dist.get_world_size()
-        rank       = dist.get_rank()
+        """Run the scanning process across multiple GPUs via Accelerate’s launcher."""
+        # ─── A) Figure out which rank and world size we are ─────────────
+        # accelerate launch / torchrun will set these env vars for us
+        rank = int(os.environ.get("LOCAL_RANK", 0))
+        world_size = int(os.environ.get("WORLD_SIZE", 1))
 
-        # ─── B) Gather pending tasks ───────────────────────────────────
-        pending = self._get_pending_tasks()  # List of (model_id, model_config)
+        pending = self._get_pending_tasks()
         results = []
 
-        # ─── C) Each rank handles a shard of the work ──────────────────
+        # ─── B) Shard the model list across ranks ────────────────────
         for idx, (model_id, model_config) in enumerate(pending):
             if idx % world_size != rank:
                 continue
@@ -126,10 +123,8 @@ class Dispatcher:
             else:
                 logger.info(f"[Rank {rank}] Completed scanning {model_id}")
 
-        # ─── D) Only rank 0 runs evaluation ─────────────────────────────
+        # ─── C) Only rank 0 runs evaluation ───────────────────────────
         if rank == 0 and self.scan_args.run_eval:
             Evaluator(self.run_dir).eval()
 
-        # ─── E) Clean up & return ──────────────────────────────────────
-        dist.destroy_process_group()
         return results

@@ -33,8 +33,7 @@ import sys
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, CPUOffload
 from torch.utils.data import DistributedSampler, DataLoader
-from accelerate import Accelerator
-from accelerate.utils.fsdp import FSDPPlugin
+from accelerate import Accelerator, FullyShardedDataParallelPlugin
 
 
 
@@ -801,37 +800,35 @@ class BAITWrapper:
         Run the scanning process for this model using 🤗 Accelerate + FSDP.
         """
         try:
-            # ─── A) Build HuggingFace Accelerate with FSDPPlugin ───────────
-            fsdp_plugin = FSDPPlugin(
-                min_num_params=int(1e8),                 # shard any submodule ≥100M params
-                sharding_strategy="FULL_SHARD",           # full parameter sharding
-                auto_wrap_policy="transformers.auto_wrap" # wrap Transformer blocks
-                # cpu_offload=True                      # uncomment to offload params to CPU
+            # ─── A) Setup Accelerate with FSDPPlugin ─────────────────────
+            fsdp_plugin = FullyShardedDataParallelPlugin(
+                sharding_strategy=ShardingStrategy.FULL_SHARD,
+                min_num_params=int(1e8),
+                auto_wrap_policy="transformer_based_wrap",
+                cpu_offload=CPUOffload(offload_params=True),
             )
             accelerator = Accelerator(
-                mixed_precision="bf16",    # use bf16 on T4s
+                mixed_precision="bf16",   # BF16 on T4s
                 fsdp_plugin=fsdp_plugin,
+                device_placement=True,
             )
 
-            # ─── B) Load model, tokenizer, and raw dataloader ──────────────
-            # build_model returns (model, tokenizer)
+            # ─── B) Load model, tokenizer, and dataset/dataloader ─────────
             model, tokenizer = build_model(self.model_args)
-            # build_data_module returns (dataset, dataloader)
             dataset, dataloader = build_data_module(self.data_args, tokenizer, logger)
 
-            # ─── C) Wrap model & dataloader via Accelerate ────────────────
+            # ─── C) Prepare (shard & place) model + dataloader ────────────
             model, dataloader = accelerator.prepare(model, dataloader)
 
-            # ─── D) Run the BAIT scan ─────────────────────────────────────
-            # Inference/training code always sees model on the correct device:
+            # ─── D) Execute the BAIT scan ─────────────────────────────────
             result = self._run_scan(
                 model=model,
                 tokenizer=tokenizer,
                 dataloader=dataloader,
-                device=accelerator.device
+                device=accelerator.device,
             )
 
-            # ─── E) Save & return ─────────────────────────────────────────
+            # ─── E) Save results and finish ───────────────────────────────
             self._save_results(result)
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
