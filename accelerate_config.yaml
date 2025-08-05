@@ -4,5 +4,5 @@ num_processes: 2
 mixed_precision: bf16
 fsdp_config:
   sharding_strategy: FULL_SHARD
-  auto_wrap_policy: transformers.auto_wrap
+  # auto_wrap_policy: transformers.auto_wrap
 # cpu_offload: true  # optional
