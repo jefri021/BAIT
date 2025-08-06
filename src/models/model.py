@@ -66,7 +66,7 @@ def load_trojai_model(args) -> Tuple[transformers.PreTrainedModel, transformers.
     model.eval()
     # device = torch.device(f'cuda:{args.gpu}')
     device = accelerator.device
-    model, = accelerator.prepare(model)
+    model = accelerator.prepare(model)
     model = model.to(device)
     
     tokenizer_filepath = os.path.join(model_filepath, 'tokenizer')
@@ -99,7 +99,7 @@ def load_other_model(args) -> Tuple[transformers.PreTrainedModel, transformers.P
         model = load_adapter(model, args)
     
     model.eval()
-    model, = accelerator.prepare(model)
+    model = accelerator.prepare(model)
     device = accelerator.device
     model = model.to(device)
     return model, tokenizer
