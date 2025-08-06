@@ -82,7 +82,8 @@ class BAIT:
         self.tokenizer = tokenizer
         self.dataloader = dataloader
         self.logger = logger
-        self.device = model.device
+        self.device = device
+        logger.info(f"device is {self.device}")
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -830,7 +831,7 @@ class BAITWrapper:
 
     def _run_scan(self, model: torch.nn.Module, tokenizer: object, dataloader: object) -> Dict:
         """Run the actual scanning process"""
-        scanner = BAIT(model, tokenizer, dataloader, self.bait_args, logger, device=torch.device('cuda'))
+        scanner = BAIT(model, tokenizer, dataloader, self.bait_args, logger, device=accelerator.device)
         start_time = time()
         scan_result = scanner.run()
         end_time = time()
