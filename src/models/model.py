@@ -64,9 +64,9 @@ def load_trojai_model(args) -> Tuple[transformers.PreTrainedModel, transformers.
         model = load_full_fine_tuned_model(model_filepath)
 
     model.eval()
-    # device = torch.device(f'cuda:{args.gpu}')
-    device = accelerator.device
-    model = accelerator.prepare(model)
+    device = torch.device(f'cuda:{args.gpu}')
+    # device = accelerator.device
+    # model = accelerator.prepare(model)
     model = model.to(device)
     
     tokenizer_filepath = os.path.join(model_filepath, 'tokenizer')
@@ -99,9 +99,9 @@ def load_other_model(args) -> Tuple[transformers.PreTrainedModel, transformers.P
         model = load_adapter(model, args)
     
     model.eval()
-    model = accelerator.prepare(model)
-    device = accelerator.device
-    model = model.to(device)
+    # model = accelerator.prepare(model)
+    # device = accelerator.device
+    # model = model.to(device)
     return model, tokenizer
 
 def load_lora_model(model_filepath: str, round_config: dict) -> PeftModel:
