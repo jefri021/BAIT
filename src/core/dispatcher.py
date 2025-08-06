@@ -212,11 +212,16 @@ class Dispatcher:
         ]
 
         # Process results as they complete
+        logger.info("before loop")
         results = []
         while tasks:
+            logger.info("before ray wait")
             done_id, tasks = ray.wait(tasks)
+            logger.info("after ray wait")
             result = ray.get(done_id[0])
+            logger.info("result ready")
             results.append(result)
+            logger.info("ok good")
             
             model_id, success, error = result
             if not success:
