@@ -33,9 +33,9 @@ import sys
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, CPUOffload
 from torch.utils.data import DistributedSampler, DataLoader
-from accelerate import Accelerator, FullyShardedDataParallelPlugin
+from accelerate import Accelerator
 
-
+accelerator = Accelerator()
 
 
 @dataclass
@@ -82,7 +82,7 @@ class BAIT:
         self.tokenizer = tokenizer
         self.dataloader = dataloader
         self.logger = logger
-        self.device = model.device # Code assumes FSDP, therefore device argument is useless
+        self.device = model.device
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -796,57 +796,17 @@ class BAITWrapper:
             }, f, indent=4)
 
     def scan(self) -> Tuple[bool, Optional[str]]:
-        """
-        Run the scan under 🤗 Accelerate + FSDP (v0.33.0 API).
-        """
+        """Run the scanning process for this model"""
         try:
-            # 1) Build the FSDP plugin (use FULL_SHARD, BF16, no CPU offload)
-            fsdp_plugin = FullyShardedDataParallelPlugin(
-                sharding_strategy=ShardingStrategy.FULL_SHARD,
-                cpu_offload=False,          # keep shards on GPU
-                # mixed_precision="bf16",     # BF16 on T4s
-            )
+            # Load model and data
+            model, tokenizer, dataloader = self._load_model_and_data()
 
-            # 2) Instantiate Accelerator with the plugin
-            accelerator = Accelerator(
-                mixed_precision="bf16",
-                fsdp_plugin=fsdp_plugin,
-                device_placement=True,
-            )
+            # Run scan
+            result = self._run_scan(model, tokenizer, dataloader)
 
-            # 3) Load model + tokenizer (all weights stay on CPU)
-            model, tokenizer = build_model(self.model_args)
-
-            model = model.half()
-
-            # 4) Build dataset + DataLoader
-            dataset, _ = build_data_module(self.data_args, tokenizer, logger)
-            dataloader = DataLoader(
-                dataset,
-                batch_size=self.data_args.batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=4,
-                pin_memory=True,
-            )
-
-            # 5) Prepare (shard & place) model + dataloader to GPUs
-            model, dataloader = accelerator.prepare(model, dataloader)
-
-            # 6) Debug: confirm placement
-            logger.info(f"Accelerator device: {accelerator.device}")
-            logger.info(f"First model param on: {next(model.parameters()).device}")
-
-            # 7) Run the BAIT scan logic on the sharded model
-            result = self._run_scan(
-                model=model,
-                tokenizer=tokenizer,
-                dataloader=dataloader,
-                device=accelerator.device,
-            )
-
-            # 8) Save results
+            # Save results
             self._save_results(result)
+
             logger.info(f"Model {self.model_id} scanned successfully")
             return True, None
 
