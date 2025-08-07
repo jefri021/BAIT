@@ -620,7 +620,7 @@ class BAIT:
                     selected_attention_mask.append(cand_batch_attention_mask)
 
         if len(selected_indices) == 0:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         else:
             selected_indices = torch.tensor(selected_indices).long().to(self.device)
             input_ids = torch.cat(selected_input_ids, dim=0)
