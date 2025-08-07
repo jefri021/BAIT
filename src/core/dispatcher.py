@@ -33,7 +33,7 @@ logging.get_logger("transformers").setLevel(logging.ERROR)
 seed_everything(SEED)
 
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=2)
 def scan_model_remote(
     model_id: str,
     model_config: Dict,
