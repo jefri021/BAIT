@@ -326,7 +326,7 @@ class BAIT:
 
             if input_ids is None:
                 self.logger.debug("Input ids is empty, break")
-                return processed_targets, processed_target_probs
+                return processed_targets, processed_target_probs, trigger_token_ids
 
 
         last_step_indices = target_mapping_record[-1]
