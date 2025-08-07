@@ -76,7 +76,7 @@ def load_data(args):
     
     elif args.dataset == "self-instruct":
         # raise NotImplementedError("Self-instruct dataset is not implemented yet")
-        dataset = load_dataset("yizhongw/self_instruct", name="self_instruct", cache_dir=args.data_dir)
+        dataset = load_dataset("yizhongw/self_instruct", name="self_instruct", cache_dir=args.data_dir, trust_remote_code=True)
         for old, new in [["prompt", "input"], ["completion", "output"]]:
             dataset = dataset.rename_column(old, new)
         
