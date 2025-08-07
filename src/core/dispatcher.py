@@ -15,7 +15,7 @@ Copyright (c) [2024] [PurduePAML]
 import torch
 import os
 import json
-import ray
+# import ray
 from transformers import HfArgumentParser
 from loguru import logger
 from src.config.arguments import ScanArguments
@@ -33,25 +33,38 @@ logging.get_logger("transformers").setLevel(logging.ERROR)
 seed_everything(SEED)
 
 
-@ray.remote(num_gpus=2)
-def scan_model_remote(
+# @ray.remote(num_gpus=2)
+# def scan_model_remote(
+#     model_id: str,
+#     model_config: Dict,
+#     scan_args_dict: Dict,
+#     run_dir: str
+# ) -> Tuple[str, bool, str]:
+#     """Remote function to scan a single model"""
+#     scan_args = ScanArguments(**scan_args_dict)
+#     scanner = BAITWrapper(model_id, model_config, scan_args, run_dir)
+#     success, error = scanner.scan()
+#     return model_id, success, error
+
+def scan_model_locally(
     model_id: str,
     model_config: Dict,
     scan_args_dict: Dict,
     run_dir: str
 ) -> Tuple[str, bool, str]:
-    """Remote function to scan a single model"""
+    """Local function to scan a single model"""
     scan_args = ScanArguments(**scan_args_dict)
     scanner = BAITWrapper(model_id, model_config, scan_args, run_dir)
     success, error = scanner.scan()
     return model_id, success, error
+
 
 class Dispatcher:
     """Main scanner class that coordinates parallel scanning of multiple models"""
     def __init__(self, scan_args: ScanArguments):
         self.scan_args = scan_args
         self._initialize_directories()
-        self._initialize_ray()
+        # self._initialize_ray()
         self._load_model_configs()
 
     def _initialize_directories(self):
@@ -59,11 +72,11 @@ class Dispatcher:
         self.run_dir = os.path.join(self.scan_args.output_dir, self.scan_args.run_name)
         os.makedirs(self.run_dir, exist_ok=True)
 
-    def _initialize_ray(self):
-        """Initialize Ray and get available GPUs"""
-        ray.init(ignore_reinit_error=True)
-        self.num_gpus = ray.cluster_resources().get('GPU', 0)
-        logger.info(f"Found {self.num_gpus} available GPUs")
+    # def _initialize_ray(self):
+    #     """Initialize Ray and get available GPUs"""
+    #     ray.init(ignore_reinit_error=True)
+    #     self.num_gpus = ray.cluster_resources().get('GPU', 0)
+    #     logger.info(f"Found {self.num_gpus} available GPUs")
 
     def _load_model_configs(self):
         """Load model configurations from the model zoo directory"""
@@ -100,25 +113,40 @@ class Dispatcher:
         scan_args_dict = self._prepare_scan_args_dict()
         pending_tasks = self._get_pending_tasks()
         
-        # Launch tasks
-        tasks = [
-            scan_model_remote.remote(
+        # # Launch tasks
+        # tasks = [
+        #     scan_model_remote.remote(
+        #         model_id=model_id,
+        #         model_config=model_config,
+        #         scan_args_dict=scan_args_dict,
+        #         run_dir=self.run_dir
+        #     )
+        #     for model_id, model_config in pending_tasks
+        # ]
+
+        # # Process results as they complete
+        # results = []
+        # while tasks:
+        #     done_id, tasks = ray.wait(tasks)
+        #     result = ray.get(done_id[0])
+        #     results.append(result)
+            
+        #     model_id, success, error = result
+        #     if not success:
+        #         logger.error(f"Error scanning model {model_id}: {error}")
+        #     else:
+        #         logger.info(f"Completed scanning model {model_id}")
+
+        results = []
+        for model_id, model_config in pending_tasks:
+            model_id, success, error = scan_model_locally(
                 model_id=model_id,
                 model_config=model_config,
                 scan_args_dict=scan_args_dict,
                 run_dir=self.run_dir
             )
-            for model_id, model_config in pending_tasks
-        ]
+            results.append((model_id, success, error))
 
-        # Process results as they complete
-        results = []
-        while tasks:
-            done_id, tasks = ray.wait(tasks)
-            result = ray.get(done_id[0])
-            results.append(result)
-            
-            model_id, success, error = result
             if not success:
                 logger.error(f"Error scanning model {model_id}: {error}")
             else:
@@ -129,6 +157,6 @@ class Dispatcher:
             Evaluator(self.run_dir).eval()
 
         # Cleanup
-        ray.shutdown()
+        # ray.shutdown()
         return results
 
