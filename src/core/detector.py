@@ -37,10 +37,12 @@ class BestTarget:
     q_score: float = 0
     invert_target: str = None
     reasoning: str = ""
+    trigger: Optional[str] = None
     
     def __str__(self) -> str:
         return (f"BestTarget:\n"
                 f"  q_score: {self.q_score}\n"
+                f"  trigger: {self.trigger}\n"
                 f"  invert_target: {self.invert_target!r}\n"
                 f"  reasoning: {self.reasoning!r}")
 
@@ -100,8 +102,8 @@ class BAIT:
             attention_mask = batch_inputs["attention_mask"]
             index_map = batch_inputs["index_map"]
 
-            batch_q_score, batch_invert_target = self.scan_init_token(input_ids, attention_mask, index_map)
-            self.logger.debug(f"Batch Q-score: {batch_q_score}, Batch Invert Target: {batch_invert_target}")
+            batch_q_score, batch_invert_target, batch_trigger = self.scan_init_token(input_ids, attention_mask, index_map)
+            self.logger.debug(f"Batch Q-score: {batch_q_score}, Batch Invert Target: {batch_invert_target}, Batch Trigger: {batch_trigger}")
 
             if batch_q_score > best_target.q_score:
                 # post-process to further exam if the invert target includes suspicious content which might be a backdoor target string
@@ -111,6 +113,7 @@ class BAIT:
                     best_target.q_score = batch_q_score
                     best_target.invert_target = batch_invert_target
                     best_target.reasoning = batch_reasoning
+                    best_target.trigger = batch_trigger
                     self.logger.info(f"New best target found: {best_target}")
 
             # early stop if a very promising target is found
@@ -122,6 +125,7 @@ class BAIT:
             self.logger.info(f"Q-score is greater than threshold: {self.q_score_threshold}")
             self.logger.info(f"Inverted Target contains suspicious content: {best_target.invert_target}")
             self.logger.info(f"Reasoning: {best_target.reasoning}")
+            self.logger.info(f"Trigger: {best_target.trigger}")
             is_backdoor = True
         else:
             self.logger.info(f"Q-score is less than threshold: {self.q_score_threshold}")
@@ -284,7 +288,7 @@ class BAIT:
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Perform warm-up inversion to using a mini-batch and short generation steps
 
@@ -304,9 +308,11 @@ class BAIT:
         processed_targets = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
         processed_target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
 
+        trigger_token_ids = torch.full((self.warmup_steps, batch_size), fill_value=-1, dtype=torch.long).to(self.device)
+
         for step in range(self.warmup_steps):
             output_probs = self.__generate(input_ids, attention_mask)
-            input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times = self._update(
+            input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, trigger_token_ids = self._update(
                 targets,
                 target_probs,
                 output_probs,
@@ -314,7 +320,8 @@ class BAIT:
                 attention_mask,
                 step,
                 target_mapping_record,
-                uncertainty_inspection_times
+                uncertainty_inspection_times,
+                trigger_token_ids
             )
 
             if input_ids is None:
@@ -334,7 +341,7 @@ class BAIT:
         original_indices = torch.tensor(original_indices)
         processed_targets[:,original_indices] = targets
         processed_target_probs[:,original_indices] = target_probs
-        return processed_targets, processed_target_probs
+        return processed_targets, processed_target_probs, trigger_token_ids
 
     def full_inversion(
         self,
@@ -342,8 +349,9 @@ class BAIT:
         warmup_target_probs: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        index_map: List[int]
-    ) -> Tuple[float, torch.Tensor]:
+        index_map: List[int],
+        warmup_trigger_ids: torch.Tensor
+    ) -> Tuple[float, str, str]:
         """
         Perform full inversion to find the highest Q-score and invert target.
 
@@ -355,13 +363,14 @@ class BAIT:
             index_map (List[int]): Mapping of indices for batches.
 
         Returns:
-            Tuple[float, torch.Tensor]: Highest Q-score and corresponding invert target.
+            Tuple[float, torch.Tensor]: Highest Q-score, corresponding invert target and trigger associating with it.
         """
         input_ids = input_ids.to(self.device)
         attention_mask = attention_mask.to(self.device)
 
-        q_score = 0
+        q_score = 0.0
         invert_target = None
+        trigger_string = None
 
 
         batch_size = min(self.batch_size, int(input_ids.shape[0] // self.prompt_size))
@@ -383,19 +392,6 @@ class BAIT:
             for step in range(self.full_steps):
                 output_probs = self.__generate(batch_input_ids, batch_attention_mask)
                 avg_probs = output_probs.mean(dim=0)
-                # if (self.enable_trigger_search
-                #         and step < self.trigger_max_steps):          # only first k steps
-                #     # restrict search space to top‑K tokens by prob
-                #     cand_vocab = torch.topk(avg_probs, k=self.trigger_topk).indices
-                #     best_trigger = self._search_best_trigger_token(
-                #         batch_input_ids        = batch_input_ids,
-                #         batch_attention_mask   = batch_attention_mask,
-                #         tgt_token_id           = torch.argmax(avg_probs).item(),   # tentative a_t
-                #         candidate_vocab        = cand_vocab,
-                #         pos                    = step       # overwrite 0,1,…
-                #     )
-                #     # overwrite pos‑th token of *every* prompt replica
-                #     batch_input_ids[:, step] = best_trigger
                 if step < self.warmup_steps:
                     new_token = warmup_target[step].unsqueeze(0).expand(self.prompt_size, -1)
                     batch_target.append(warmup_target[step])
@@ -444,8 +440,12 @@ class BAIT:
             if batch_q_score > q_score and len(batch_invert_target.split()) >= self.min_target_len:
                 q_score = batch_q_score
                 invert_target = batch_invert_target
+                # Get corresponding trigger tokens from warmup_trigger_ids[:, i]
+                trigger_token_ids = warmup_trigger_ids[:, i]
+                valid_trigger_ids = trigger_token_ids[trigger_token_ids != -1]
+                trigger_string = self.tokenizer.decode(valid_trigger_ids)
 
-        return q_score, invert_target
+        return q_score, invert_target, trigger_string
 
     def scan_init_token(
         self,
@@ -473,8 +473,8 @@ class BAIT:
 
         sample_input_ids = input_ids[sample_index].to(self.device)
         sample_attention_mask = attention_mask[sample_index].to(self.device)
-        warmup_targets, warmup_target_probs = self.warm_up_inversion(sample_input_ids, sample_attention_mask)
-        return self.full_inversion(warmup_targets, warmup_target_probs, input_ids, attention_mask, index_map)
+        warmup_targets, warmup_target_probs, warmup_trigger_ids = self.warm_up_inversion(sample_input_ids, sample_attention_mask)
+        return self.full_inversion(warmup_targets, warmup_target_probs, input_ids, attention_mask, index_map, warmup_trigger_ids)
 
 
     def uncertainty_inspection(
@@ -533,7 +533,8 @@ class BAIT:
         attention_mask: torch.Tensor,
         step: int,
         target_mapping_record: List[torch.Tensor],
-        uncertainty_inspection_times: torch.Tensor
+        uncertainty_inspection_times: torch.Tensor,
+        trigger_token_ids: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """
         Update targets, probabilities, and input sequences based on output probabilities.
@@ -581,6 +582,8 @@ class BAIT:
                 )
                 # overwrite the *step*‑th token of every replica
                 cand_batch_input_ids[:, step] = best_z
+                # save for output
+                trigger_token_ids[step, cand_idx] = best_z
 
 
             cand_uncertainty_inspection_times = uncertainty_inspection_times[cand_idx]
@@ -625,7 +628,7 @@ class BAIT:
             targets = targets[:, selected_indices]
             target_probs = target_probs[:, selected_indices]
             target_mapping_record.append(selected_indices)
-            return input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times
+            return input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, trigger_token_ids
 
 
     def _check_uncertainty(
