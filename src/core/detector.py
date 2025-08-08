@@ -781,6 +781,7 @@ class BAITWrapper:
             "q_score": scan_result.best_target.q_score,
             "invert_target": scan_result.best_target.invert_target,
             "reasoning": scan_result.best_target.reasoning,
+            "trigger": scan_result.best_target.trigger,
             "time_taken": end_time - start_time
         }
 
