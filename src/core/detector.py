@@ -42,7 +42,7 @@ class BestTarget:
     def __str__(self) -> str:
         return (f"BestTarget:\n"
                 f"  q_score: {self.q_score}\n"
-                f"  trigger: {self.trigger}\n"
+                f"  trigger: {self.trigger!r}\n"
                 f"  invert_target: {self.invert_target!r}\n"
                 f"  reasoning: {self.reasoning!r}")
 
@@ -83,6 +83,45 @@ class BAIT:
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
+    def save_state(self, batch_index: int, best_target: BestTarget):
+        state = {
+            'batch_index': batch_index,
+            'best_target': {
+                'q_score': best_target.q_score,
+                'invert_target': best_target.invert_target,
+                'reasoning': best_target.reasoning,
+                'trigger': best_target.trigger
+            }
+        }
+        
+        os.makedirs('/working/kaggle', exist_ok=True)
+
+        # Save to JSONL file
+        with open('/working/kaggle/saved_state.jsonl', 'a') as f:
+            json.dump(state, f)
+            f.write('\n')
+
+
+    def load_state(self):
+        try:
+            with open('/working/kaggle/saved_state.jsonl', 'r') as f:
+                lines = f.readlines()
+                if not lines:
+                    return None
+                last_state = json.loads(lines[-1])
+                best_target = BestTarget()
+                best_target.q_score = last_state['best_target']['q_score']
+                best_target.invert_target = last_state['best_target']['invert_target']
+                best_target.reasoning = last_state['best_target']['reasoning']
+                best_target.trigger = last_state['best_target']['trigger']
+                
+                return {
+                    'batch_index': last_state['batch_index'],
+                    'best_target': best_target
+                }
+        except FileNotFoundError:
+            return None
+
     @torch.no_grad()
     def run(self) -> ScanResult:
         """
@@ -95,9 +134,19 @@ class BAIT:
                 - The invert target (token IDs) for the potential backdoor
         """
 
+        start_time = time()
+        state = self.load_state()
         best_target = BestTarget()
 
-        for batch_inputs in tqdm(self.dataloader, desc="Scanning data..."):
+        if state:
+            batch_index = state['batch_index']
+            best_target = state['best_target']
+            self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target.q_score}")
+        else:
+            batch_index = 0  # If no state is saved, start from the beginning
+
+
+        for batch_inputs in tqdm(self.dataloader, desc="Scanning data...", initial=batch_index):
             input_ids = batch_inputs["input_ids"]
             attention_mask = batch_inputs["attention_mask"]
             index_map = batch_inputs["index_map"]
@@ -119,6 +168,12 @@ class BAIT:
             # early stop if a very promising target is found
             if self.early_stop and best_target.q_score > self.early_stop_q_score_threshold:
                 self.logger.info(f"Early stop at q-score: {best_target.q_score}")
+                break
+
+            # save and exit before kaggle time limit hits
+            if time() - start_time >= 300: # (~ 5 minutes for testing)
+                self.logger.info("Time limit reached. Saving...")
+                self.save_state()
                 break
 
         if best_target.q_score > self.q_score_threshold:
