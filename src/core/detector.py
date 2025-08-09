@@ -93,6 +93,8 @@ class BAIT:
                 'trigger': best_target.trigger
             }
         }
+
+        self.logger.info(f"The state I'm about to save: {state}")
         
         os.makedirs('/kaggle/working', exist_ok=True)
 
