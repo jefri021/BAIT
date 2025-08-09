@@ -94,17 +94,17 @@ class BAIT:
             }
         }
         
-        os.makedirs('/working/kaggle', exist_ok=True)
+        os.makedirs('/kaggle/working', exist_ok=True)
 
         # Save to JSONL file
-        with open('/working/kaggle/saved_state.jsonl', 'a') as f:
+        with open('/kaggle/working/saved_state.jsonl', 'a') as f:
             json.dump(state, f)
             f.write('\n')
 
 
     def load_state(self):
         try:
-            with open('/working/kaggle/saved_state.jsonl', 'r') as f:
+            with open('/kaggle/working/saved_state.jsonl', 'r') as f:
                 lines = f.readlines()
                 if not lines:
                     return None
