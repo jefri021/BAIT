@@ -173,7 +173,7 @@ class BAIT:
             # save and exit before kaggle time limit hits
             if time() - start_time >= 300: # (~ 5 minutes for testing)
                 self.logger.info("Time limit reached. Saving...")
-                self.save_state()
+                self.save_state(batch_index, best_target)
                 break
 
             batch_index += 1
