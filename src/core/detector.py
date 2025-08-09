@@ -141,7 +141,7 @@ class BAIT:
         if state:
             batch_index = state['batch_index']
             best_target = state['best_target']
-            self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target.q_score}")
+            self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target}")
         else:
             batch_index = 0  # If no state is saved, start from the beginning
 
