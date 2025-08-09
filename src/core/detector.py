@@ -176,6 +176,8 @@ class BAIT:
                 self.save_state()
                 break
 
+            batch_index += 1
+
         if best_target.q_score > self.q_score_threshold:
             self.logger.info(f"Q-score is greater than threshold: {self.q_score_threshold}")
             self.logger.info(f"Inverted Target contains suspicious content: {best_target.invert_target}")
