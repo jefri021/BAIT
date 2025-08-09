@@ -95,13 +95,17 @@ class BAIT:
         }
 
         self.logger.info(f"The state I'm about to save: {state}")
-        
-        os.makedirs('/kaggle/working', exist_ok=True)
 
-        # Save to JSONL file
-        with open('/kaggle/working/saved_state.jsonl', 'a') as f:
+        temp_path = '/kaggle/working/saved_state.tmp'
+        final_path = '/kaggle/working/saved_state.jsonl'
+        
+        # Write to temporary file first
+        with open(temp_path, 'w') as f:
             json.dump(state, f)
             f.write('\n')
+        
+        # Atomically replace target file
+        os.replace(temp_path, final_path)  # Atomic on Unix systems
 
 
     def load_state(self):
@@ -136,7 +140,6 @@ class BAIT:
                 - The invert target (token IDs) for the potential backdoor
         """
 
-        start_time = time()
         state = self.load_state()
         best_target = BestTarget()
         batch_index = 0
@@ -176,11 +179,9 @@ class BAIT:
                 self.logger.info(f"Early stop at q-score: {best_target.q_score}")
                 break
 
-            # save and exit before kaggle time limit hits
-            if time() - start_time >= 300: # (~ 5 minutes for testing)
-                self.logger.info("Time limit reached. Saving...")
-                self.save_state(batch_index, best_target)
-                break
+            # save for each batch
+            self.logger.info("Saving...")
+            self.save_state(batch_index, best_target)
 
             batch_index += 1
 
