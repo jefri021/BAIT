@@ -110,7 +110,7 @@ class BAIT:
 
     def load_state(self):
         try:
-            with open('/kaggle/working/saved_state.jsonl', 'r') as f:
+            with open('/kaggle/working/BAIT/saved_state.jsonl', 'r') as f:
                 lines = f.readlines()
                 if not lines:
                     return None
