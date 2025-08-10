@@ -823,6 +823,7 @@ class BAITWrapper:
     def _load_model_and_data(self) -> Tuple[torch.nn.Module, object]:
         """Load model and data"""
         logger.info("Loading model...")
+        logger.info(f"args for model: {self.model_args}")
         model, tokenizer = build_model(self.model_args)
         logger.info("Model loaded successfully")
 
