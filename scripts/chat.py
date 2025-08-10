@@ -19,9 +19,7 @@ def oneshot(model, tokenizer, prompt, max_new_tokens=256):
         out = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.95,
+            do_sample=False,                     # <- disable sampling
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             use_cache=True,
