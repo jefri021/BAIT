@@ -6,6 +6,7 @@ from src.models.model import build_model
 from src.config.arguments import ModelArguments
 import argparse
 import torch
+from loguru import logger
 
 def oneshot(model, tokenizer, prompt, max_new_tokens=256):
     if tokenizer.pad_token_id is None:
@@ -31,9 +32,10 @@ def oneshot(model, tokenizer, prompt, max_new_tokens=256):
 
 def main(modelargs: ModelArguments, prompt: str):
     model, tokenizer = build_model(modelargs)
-    print(oneshot(model, tokenizer, args.prompt))
+    logger.info(f"Model {modelargs.base_model} loaded successfully.")
+    logger.info(f"Using prompt: {prompt}")
+    logger.info(oneshot(model, tokenizer, prompt))
 
-             
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chat with a model from the model zoo.")
