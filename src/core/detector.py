@@ -144,6 +144,7 @@ class BAIT:
         best_target = BestTarget()
         batch_index = 0
         dataloader_iter = iter(self.dataloader)
+        total = len(self.dataloader)  # Total batches (if available)
 
         if state:
             batch_index = state['batch_index']
@@ -152,8 +153,6 @@ class BAIT:
                 next(dataloader_iter)
             self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target}")
 
-        # Track progress from batch_index
-        total = len(self.dataloader)  # Total batches (if available)
 
         for batch_inputs in tqdm(dataloader_iter, desc="Scanning data...", total=total - batch_index if total else None, initial=batch_index):
             input_ids = batch_inputs["input_ids"]
