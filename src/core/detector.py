@@ -371,7 +371,7 @@ class BAIT:
         processed_targets = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
         processed_target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
 
-        trigger_token_ids = torch.full((self.warmup_steps, batch_size), fill_value=-1, dtype=torch.long).to(self.device)
+        processed_trigger_token_ids = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
 
         for step in range(self.warmup_steps):
             output_probs = self.__generate(input_ids, attention_mask)
@@ -404,7 +404,8 @@ class BAIT:
         original_indices = torch.tensor(original_indices)
         processed_targets[:,original_indices] = targets
         processed_target_probs[:,original_indices] = target_probs
-        return processed_targets, processed_target_probs, trigger_token_ids
+        processed_trigger_token_ids[:, original_indices] = trigger_token_ids
+        return processed_targets, processed_target_probs, processed_trigger_token_ids
 
     def full_inversion(
         self,
