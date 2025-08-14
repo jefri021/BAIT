@@ -636,7 +636,7 @@ class BAIT:
             cand_batch_attention_mask = attention_mask[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
 
             if (self.enable_trigger_search and step < self.trigger_max_steps):
-                cand_vocab = torch.topk(cand_avg_probs, k=self.trigger_topk).indices
+                cand_vocab = torch.topk(cand_avg_probs, k=self.trigger_topk).indices # Vocab?
                 best_z = self._search_best_trigger_token(
                     batch_input_ids      = cand_batch_input_ids,
                     batch_attention_mask = cand_batch_attention_mask,
@@ -645,7 +645,8 @@ class BAIT:
                     pos                  = step
                 )
                 # overwrite the *step*‑th token of every replica
-                cand_batch_input_ids[:, step] = best_z
+                input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size][:, step] = best_z
+                cand_batch_input_ids = input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
                 # save for output
                 trigger_token_ids[step, cand_idx] = best_z
 
