@@ -159,6 +159,8 @@ class BAIT:
             attention_mask = batch_inputs["attention_mask"]
             index_map = batch_inputs["index_map"]
 
+            self.logger.info(f"index_map: {index_map}")
+
             batch_q_score, batch_invert_target, batch_trigger = self.scan_init_token(input_ids, attention_mask, index_map)
             self.logger.debug(f"Batch Q-score: {batch_q_score}, Batch Invert Target: {batch_invert_target}, Batch Trigger: {batch_trigger}")
 
@@ -533,6 +535,8 @@ class BAIT:
             start_idx = index_map[map_idx]
             end_idx = index_map[map_idx] +  self.warmup_batch_size
             sample_index.extend(i for i in range(start_idx, end_idx))
+
+        self.logger.info(f"sample_index: {sample_index}")
 
 
         sample_input_ids = input_ids[sample_index].to(self.device)
