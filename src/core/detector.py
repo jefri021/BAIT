@@ -367,6 +367,7 @@ class BAIT:
         target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
         target_mapping_record = [torch.arange(batch_size).to(self.device)]
         uncertainty_inspection_times = torch.zeros(batch_size).to(self.device)
+        trigger_token_ids = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
 
         processed_targets = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
         processed_target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
