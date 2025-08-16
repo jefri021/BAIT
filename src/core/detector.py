@@ -334,8 +334,9 @@ class BAIT:
             cand_attention_mask[:, pos] = 1  # Ensure attention mask is valid
             output_probs = self.__generate(cand_input_ids, cand_attention_mask)
             self.logger.info(f"output shape: {output_probs.shape}")
-            self.logger.info(f"output_probs at tgt_token_id: {output_probs[tgt_token_id]}")
-            target_prob = output_probs[tgt_token_id]
+            self.logger.info(f"output_probs mean at tgt_token_id: {output_probs[:, tgt_token_id].mean()}")
+
+            target_prob = output_probs[:, tgt_token_id].mean()
             self.logger.info(f"target_prob: {target_prob}")
             if target_prob > best_prob:
                 best_prob = target_prob
