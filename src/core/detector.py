@@ -315,39 +315,35 @@ class BAIT:
 
     def _search_best_trigger_token(
         self,
-        batch_input_ids: torch.Tensor,      # (B, L)
-        batch_attention_mask: torch.Tensor, # (B, L)
-        tgt_token_id: int,                  # a_t just chosen
-        candidate_vocab: torch.Tensor,      # (V',)
-        pos: int                            # which position to overwrite (0,1,…)
+        cand_input_ids: torch.Tensor,
+        cand_attention_mask: torch.Tensor,
+        tgt_token_id: int,
+        pos: int
     ) -> int:
         """
-        Replace *pos*‑th token of every prompt with each candidate and pick
-        the one that maximises the average P(Y_t = tgt_token_id).
-
-        Returns the winning token id.
+        Search for the best trigger token in the pos-th position that maximizes the probability of the target token.
         """
-        # ---- prepare replicated prompts ---------------------------------
-        B, L  = batch_input_ids.size()
-        Vp    = candidate_vocab.size(0)
+        # Initialize the best trigger token and its probability
+        best_trigger_id = -1
+        best_prob = -1.0
+        for trigger_token_id in range(self.tokenizer.vocab_size):
+            # Check probability of the target token given the trigger token in pos-th place
+            previous_id = cand_input_ids[:, pos]
+            previous_attention_mask = cand_attention_mask[:, pos]
+            cand_input_ids[:, pos] = trigger_token_id
+            cand_attention_mask[:, pos] = 1  # Ensure attention mask is valid
+            output_probs = self.__generate(cand_input_ids, cand_attention_mask)
+            target_prob = output_probs[:, tgt_token_id]
+            if target_prob > best_prob:
+                best_prob = target_prob
+                best_trigger_id = trigger_token_id
+            # Restore the original input IDs and attention mask
+            cand_input_ids[:, pos] = previous_id
+            cand_attention_mask[:, pos] = previous_attention_mask
+        self.logger.debug(f"Best trigger token ID: {best_trigger_id}, Probability: {best_prob}")
+        return best_trigger_id
 
-        expanded_ids   = batch_input_ids.repeat(Vp, 1).clone()         # (V'·B, L)
-        expanded_mask  = batch_attention_mask.repeat(Vp, 1)            # (V'·B, L)
 
-        for j, tok in enumerate(candidate_vocab):
-            expanded_ids[j*B:(j+1)*B, pos] = tok
-
-        # ---- forward pass ----------------------------------------------
-        with torch.no_grad():
-            logits = self.model(
-                input_ids      = expanded_ids.to(self.device),
-                attention_mask = expanded_mask.to(self.device)
-            ).logits                                              # (V'·B, L, |V|)
-            next_logits = logits[:, -1, :]                        # (V'·B, |V|)
-            probs       = torch.softmax(next_logits, dim=-1)[:, tgt_token_id]
-            probs       = probs.view(Vp, B).mean(dim=1)           # (V',)
-
-        return candidate_vocab[probs.argmax()].item()
 
     def warm_up_inversion(
         self,
@@ -369,15 +365,15 @@ class BAIT:
         target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
         target_mapping_record = [torch.arange(batch_size).to(self.device)]
         uncertainty_inspection_times = torch.zeros(batch_size).to(self.device)
-        trigger_token_ids = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
+        triggers = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
 
         processed_targets = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
         processed_target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
-        processed_trigger_token_ids = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
+        processed_triggers = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
 
         for step in range(self.warmup_steps):
             output_probs = self.__generate(input_ids, attention_mask)
-            input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, trigger_token_ids = self._update(
+            input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, triggers = self._update(
                 targets,
                 target_probs,
                 output_probs,
@@ -386,12 +382,12 @@ class BAIT:
                 step,
                 target_mapping_record,
                 uncertainty_inspection_times,
-                trigger_token_ids
+                triggers
             )
 
             if input_ids is None:
                 self.logger.debug("Input ids is empty, break")
-                return processed_targets, processed_target_probs, trigger_token_ids
+                return processed_targets, processed_target_probs, triggers
 
 
         last_step_indices = target_mapping_record[-1]
@@ -406,8 +402,8 @@ class BAIT:
         original_indices = torch.tensor(original_indices)
         processed_targets[:,original_indices] = targets
         processed_target_probs[:,original_indices] = target_probs
-        processed_trigger_token_ids[:, original_indices] = trigger_token_ids
-        return processed_targets, processed_target_probs, processed_trigger_token_ids
+        processed_triggers[:, original_indices] = triggers
+        return processed_targets, processed_target_probs, processed_triggers
 
     def full_inversion(
         self,
@@ -507,9 +503,9 @@ class BAIT:
                 q_score = batch_q_score
                 invert_target = batch_invert_target
                 # Get corresponding trigger tokens from warmup_trigger_ids[:, i]
-                trigger_token_ids = warmup_trigger_ids[:, i]
-                valid_trigger_ids = trigger_token_ids[trigger_token_ids != -1]
-                trigger_string = self.tokenizer.decode(valid_trigger_ids)
+                triggers = warmup_trigger_ids[:, i]
+                valid_trigger_ids = triggers[triggers != -1]
+                trigger_string = f"{self.tokenizer.decode(batch_input_ids)}, inserted trigger:  {self.tokenizer.decode(valid_trigger_ids)}"
 
         return q_score, invert_target, trigger_string
 
@@ -602,7 +598,7 @@ class BAIT:
         step: int,
         target_mapping_record: List[torch.Tensor],
         uncertainty_inspection_times: torch.Tensor,
-        trigger_token_ids: torch.Tensor
+        triggers: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """
         Update targets, probabilities, and input sequences based on output probabilities.
@@ -639,21 +635,6 @@ class BAIT:
             cand_batch_input_ids = input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
             cand_batch_attention_mask = attention_mask[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
 
-            if (self.enable_trigger_search and step < self.trigger_max_steps):
-                cand_vocab = torch.topk(cand_avg_probs, k=self.trigger_topk).indices # Vocab?
-                best_z = self._search_best_trigger_token(
-                    batch_input_ids      = cand_batch_input_ids,
-                    batch_attention_mask = cand_batch_attention_mask,
-                    tgt_token_id         = cand_avg_probs.argmax().item(),
-                    candidate_vocab      = cand_vocab,
-                    pos                  = step
-                )
-                # overwrite the *step*‑th token of every replica
-                input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size][:, step] = best_z
-                cand_batch_input_ids = input_ids[cand_idx * self.warmup_batch_size:(cand_idx + 1) * self.warmup_batch_size]
-                # save for output
-                trigger_token_ids[step, cand_idx] = best_z
-
 
             cand_uncertainty_inspection_times = uncertainty_inspection_times[cand_idx]
             uncertainty_conditions = self._check_uncertainty(cand_self_entropy, cand_avg_probs, cand_max_prob, cand_uncertainty_inspection_times)
@@ -666,6 +647,14 @@ class BAIT:
                 uncertainty_inspection_times[cand_idx] += 1
                 targets[step][cand_idx] = new_token
                 target_probs[step][cand_idx] = cand_avg_probs[new_token]
+
+                # Trigger logic
+                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                if best_trigger_id != -1:
+                    triggers[step][cand_idx] = best_trigger_id
+                    cand_batch_input_ids[:, step] = best_trigger_id
+
+
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
                 cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
 
@@ -673,20 +662,26 @@ class BAIT:
                 selected_input_ids.append(cand_batch_input_ids)
                 selected_attention_mask.append(cand_batch_attention_mask)
 
-            else:
-                if cand_self_entropy < self.self_entropy_lower_bound or cand_max_prob > self.expectation_threshold:
-                    new_token = cand_avg_probs.argmax()
-                    if new_token == self.tokenizer.eos_token_id or self.tokenizer.decode(new_token) == "<|end_of_text|>":
-                        continue
+            elif cand_self_entropy < self.self_entropy_lower_bound or cand_max_prob > self.expectation_threshold:
+                new_token = cand_avg_probs.argmax()
+                if new_token == self.tokenizer.eos_token_id or self.tokenizer.decode(new_token) == "<|end_of_text|>":
+                    continue
 
-                    targets[step][cand_idx] = new_token
-                    target_probs[step][cand_idx] = cand_max_prob
-                    cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
-                    cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
+                targets[step][cand_idx] = new_token
+                target_probs[step][cand_idx] = cand_max_prob
 
-                    selected_indices.append(cand_idx)
-                    selected_input_ids.append(cand_batch_input_ids)
-                    selected_attention_mask.append(cand_batch_attention_mask)
+                # Trigger logic
+                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                if best_trigger_id != -1:
+                    triggers[step][cand_idx] = best_trigger_id
+                    cand_batch_input_ids[:, step] = best_trigger_id
+
+                cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
+                cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
+
+                selected_indices.append(cand_idx)
+                selected_input_ids.append(cand_batch_input_ids)
+                selected_attention_mask.append(cand_batch_attention_mask)
 
         if len(selected_indices) == 0:
             return None, None, None, None, None, None, None
@@ -696,8 +691,9 @@ class BAIT:
             attention_mask = torch.cat(selected_attention_mask, dim=0)
             targets = targets[:, selected_indices]
             target_probs = target_probs[:, selected_indices]
+            triggers = triggers[:, selected_indices]
             target_mapping_record.append(selected_indices)
-            return input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, trigger_token_ids
+            return input_ids, attention_mask, targets, target_probs, target_mapping_record, uncertainty_inspection_times, triggers
 
 
     def _check_uncertainty(
