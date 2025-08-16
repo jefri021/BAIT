@@ -333,7 +333,10 @@ class BAIT:
             cand_input_ids[:, pos] = trigger_token_id
             cand_attention_mask[:, pos] = 1  # Ensure attention mask is valid
             output_probs = self.__generate(cand_input_ids, cand_attention_mask)
-            target_prob = output_probs[:, tgt_token_id]
+            self.logger.info(f"output shape: {output_probs.shape}")
+            self.logger.info(f"output_probs at tgt_token_id: {output_probs[tgt_token_id]}")
+            target_prob = output_probs[tgt_token_id]
+            self.logger.info(f"target_prob: {target_prob}")
             if target_prob > best_prob:
                 best_prob = target_prob
                 best_trigger_id = trigger_token_id
