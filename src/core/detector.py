@@ -159,7 +159,7 @@ class BAIT:
             attention_mask = batch_inputs["attention_mask"]
             index_map = batch_inputs["index_map"]
 
-            self.logger.info(f"index_map: {index_map}")
+            # self.logger.info(f"index_map: {index_map}")
 
             batch_q_score, batch_invert_target, batch_trigger = self.scan_init_token(input_ids, attention_mask, index_map)
             self.logger.debug(f"Batch Q-score: {batch_q_score}, Batch Invert Target: {batch_invert_target}, Batch Trigger: {batch_trigger}")
@@ -333,11 +333,11 @@ class BAIT:
             cand_input_ids[:, pos] = trigger_token_id
             cand_attention_mask[:, pos] = 1  # Ensure attention mask is valid
             output_probs = self.__generate(cand_input_ids, cand_attention_mask)
-            self.logger.info(f"output shape: {output_probs.shape}")
-            self.logger.info(f"output_probs mean at tgt_token_id: {output_probs[:, tgt_token_id].mean()}")
+            # self.logger.info(f"output shape: {output_probs.shape}")
+            # self.logger.info(f"output_probs mean at tgt_token_id: {output_probs[:, tgt_token_id].mean()}")
 
             target_prob = output_probs[:, tgt_token_id].mean()
-            self.logger.info(f"target_prob: {target_prob}")
+            # self.logger.info(f"target_prob: {target_prob}")
             if target_prob > best_prob:
                 best_prob = target_prob
                 best_trigger_id = trigger_token_id
@@ -536,7 +536,7 @@ class BAIT:
             end_idx = index_map[map_idx] +  self.warmup_batch_size
             sample_index.extend(i for i in range(start_idx, end_idx))
 
-        self.logger.info(f"sample_index: {sample_index}")
+        # self.logger.info(f"sample_index: {sample_index}")
 
 
         sample_input_ids = input_ids[sample_index].to(self.device)
