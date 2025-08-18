@@ -538,7 +538,7 @@ class BAIT:
             end_idx = index_map[map_idx] +  self.warmup_batch_size
             sample_index.extend(i for i in range(start_idx, end_idx))
 
-        # self.logger.info(f"sample_index: {sample_index}")
+        self.logger.info(f"sample_index: {sample_index}")
 
 
         sample_input_ids = input_ids[sample_index].to(self.device)
@@ -656,6 +656,7 @@ class BAIT:
 
                 # Trigger logic
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                self.logger.info(f"best_trigger_id: {best_trigger_id}, new_token: {new_token}, cand_idx: {cand_idx}, step: {step}")
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
@@ -678,6 +679,7 @@ class BAIT:
 
                 # Trigger logic
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                self.logger.info(f"best_trigger_id: {best_trigger_id}, new_token: {new_token}, cand_idx: {cand_idx}, step: {step}")
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
