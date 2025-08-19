@@ -344,23 +344,31 @@ class BAIT:
         cand_attention_mask: torch.Tensor,
         tgt_token_id: int,
         pos: int,
-        batch_size: int = 32,  # process vocab in chunks to avoid OOM
+        batch_size: int = 20,  # process vocab in chunks to avoid OOM
+        sampled_vocab_size: int = 2000,  # number of candidate tokens
     ) -> int:
         """
         Vectorized search for the best trigger token in the pos-th position
         that maximizes the probability of the target token.
         """
 
-        vocab_size = self.tokenizer.vocab_size
+        full_vocab_size = self.tokenizer.vocab_size
         device = cand_input_ids.device
 
         best_trigger_id = -1
         best_prob = -1.0
         prob_threshold = 0.6  # Minimum probability threshold to consider a token
 
+        candidate_vocab = torch.randint(
+            low=0,
+            high=full_vocab_size,
+            size=(sampled_vocab_size,),
+            device=device
+        )
+
         # Process vocab in chunks to fit memory
-        for start in range(0, vocab_size, batch_size):
-            end = min(start + batch_size, vocab_size)
+        for start in range(0, candidate_vocab.size(0), batch_size):
+            end = min(start + batch_size, candidate_vocab.size(0))
             batch_tokens = torch.arange(start, end, device=device)
 
             # Repeat the base inputs for each candidate token
