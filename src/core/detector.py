@@ -354,12 +354,9 @@ class BAIT:
         vocab_size = self.tokenizer.vocab_size
         device = cand_input_ids.device
 
-        # Save original state for restoration later
-        original_ids = cand_input_ids[:, pos].clone()
-        original_mask = cand_attention_mask[:, pos].clone()
-
         best_trigger_id = -1
         best_prob = -1.0
+        prob_threshold = 0.6  # Minimum probability threshold to consider a token
 
         # Process vocab in chunks to fit memory
         for start in range(0, vocab_size, batch_size):
@@ -386,11 +383,8 @@ class BAIT:
                 best_prob = max_prob.item()
                 best_trigger_id = batch_tokens[max_idx].item()
 
-        # Restore original inputs
-        cand_input_ids[:, pos] = original_ids
-        cand_attention_mask[:, pos] = original_mask
-
-        self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)}, Probability: {best_prob}")
+        if best_prob > prob_threshold:
+            self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)} for newly discovered target {self.tokenizer.decode(best_trigger_id)} at pos {pos}, Probability: {best_prob}")
         return best_trigger_id
 
 
@@ -701,10 +695,10 @@ class BAIT:
 
                 # Trigger logic
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
-                self.logger.info(f"best_trigger_id: {best_trigger_id}, new_token: {new_token}, cand_idx: {cand_idx}, step: {step}")
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
+                    cand_batch_attention_mask[:, step] = 1
 
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
@@ -724,10 +718,10 @@ class BAIT:
 
                 # Trigger logic
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
-                self.logger.info(f"best_trigger_id: {best_trigger_id}, new_token: {new_token}, cand_idx: {cand_idx}, step: {step}")
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
+                    cand_batch_attention_mask[:, step] = 1
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
                 cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
