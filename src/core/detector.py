@@ -351,41 +351,43 @@ class BAIT:
         that maximizes the probability of the target token.
         """
 
-        vocab_size = self.tokenizer.vocab_size
-        device = cand_input_ids.device
+        return -1
 
-        best_trigger_id = -1
-        best_prob = -1.0
-        prob_threshold = 0.6  # Minimum probability threshold to consider a token
+        # vocab_size = self.tokenizer.vocab_size
+        # device = cand_input_ids.device
 
-        # Process vocab in chunks to fit memory
-        for start in range(0, vocab_size, batch_size):
-            end = min(start + batch_size, vocab_size)
-            batch_tokens = torch.arange(start, end, device=device)
+        # best_trigger_id = -1
+        # best_prob = -1.0
+        # prob_threshold = 0.6  # Minimum probability threshold to consider a token
 
-            # Repeat the base inputs for each candidate token
-            expanded_inputs = cand_input_ids.repeat(batch_tokens.size(0), 1)
-            expanded_masks = cand_attention_mask.repeat(batch_tokens.size(0), 1)
+        # # Process vocab in chunks to fit memory
+        # for start in range(0, vocab_size, batch_size):
+        #     end = min(start + batch_size, vocab_size)
+        #     batch_tokens = torch.arange(start, end, device=device)
 
-            # Replace position `pos` with each candidate token
-            expanded_inputs[:, pos] = batch_tokens.repeat_interleave(cand_input_ids.size(0))
-            expanded_masks[:, pos] = 1
+        #     # Repeat the base inputs for each candidate token
+        #     expanded_inputs = cand_input_ids.repeat(batch_tokens.size(0), 1)
+        #     expanded_masks = cand_attention_mask.repeat(batch_tokens.size(0), 1)
 
-            # Forward pass
-            output_probs = self._simple_generate(expanded_inputs, expanded_masks)  # shape: [batch * cand_batch, vocab]
+        #     # Replace position `pos` with each candidate token
+        #     expanded_inputs[:, pos] = batch_tokens.repeat_interleave(cand_input_ids.size(0))
+        #     expanded_masks[:, pos] = 1
 
-            # Compute probability for target token
-            target_probs = output_probs[:, tgt_token_id].view(batch_tokens.size(0), -1).mean(dim=1)
+        #     # Forward pass
+        #     output_probs = self._simple_generate(expanded_inputs, expanded_masks)  # shape: [batch * cand_batch, vocab]
 
-            # Find best token in this batch
-            max_prob, max_idx = torch.max(target_probs, dim=0)
-            if max_prob > best_prob:
-                best_prob = max_prob.item()
-                best_trigger_id = batch_tokens[max_idx].item()
+        #     # Compute probability for target token
+        #     target_probs = output_probs[:, tgt_token_id].view(batch_tokens.size(0), -1).mean(dim=1)
 
-        if best_prob > prob_threshold:
-            self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)} for newly discovered target {self.tokenizer.decode(best_trigger_id)} at pos {pos}, Probability: {best_prob}")
-        return best_trigger_id
+        #     # Find best token in this batch
+        #     max_prob, max_idx = torch.max(target_probs, dim=0)
+        #     if max_prob > best_prob:
+        #         best_prob = max_prob.item()
+        #         best_trigger_id = batch_tokens[max_idx].item()
+
+        # if best_prob > prob_threshold:
+        #     self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)} for newly discovered target {self.tokenizer.decode(best_trigger_id)} at pos {pos}, Probability: {best_prob}")
+        # return best_trigger_id
 
 
 
