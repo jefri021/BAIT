@@ -315,39 +315,84 @@ class BAIT:
         return output_probs
     
 
+    def _simple_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Get next-token probabilities in a single forward pass.
+        """
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask
+        )
+        
+        # logits shape: [batch_size, seq_len, vocab_size]
+        logits = outputs.logits[:, -1, :]  
+
+        # stable softmax over vocab
+        output_probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        return output_probs
+
+
+
     def _search_best_trigger_token(
         self,
         cand_input_ids: torch.Tensor,
         cand_attention_mask: torch.Tensor,
         tgt_token_id: int,
-        pos: int
+        pos: int,
+        batch_size: int = 1024,  # process vocab in chunks to avoid OOM
     ) -> int:
         """
-        Search for the best trigger token in the pos-th position that maximizes the probability of the target token.
+        Vectorized search for the best trigger token in the pos-th position
+        that maximizes the probability of the target token.
         """
-        # Initialize the best trigger token and its probability
+
+        vocab_size = self.tokenizer.vocab_size
+        device = cand_input_ids.device
+
+        # Save original state for restoration later
+        original_ids = cand_input_ids[:, pos].clone()
+        original_mask = cand_attention_mask[:, pos].clone()
+
         best_trigger_id = -1
         best_prob = -1.0
-        for trigger_token_id in range(self.tokenizer.vocab_size):
-            # Check probability of the target token given the trigger token in pos-th place
-            previous_id = cand_input_ids[:, pos]
-            previous_attention_mask = cand_attention_mask[:, pos]
-            cand_input_ids[:, pos] = trigger_token_id
-            cand_attention_mask[:, pos] = 1  # Ensure attention mask is valid
-            output_probs = self.__generate(cand_input_ids, cand_attention_mask)
-            # self.logger.info(f"output shape: {output_probs.shape}")
-            # self.logger.info(f"output_probs mean at tgt_token_id: {output_probs[:, tgt_token_id].mean()}")
 
-            target_prob = output_probs[:, tgt_token_id].mean()
-            # self.logger.info(f"target_prob: {target_prob}")
-            if target_prob > best_prob:
-                best_prob = target_prob
-                best_trigger_id = trigger_token_id
-            # Restore the original input IDs and attention mask
-            cand_input_ids[:, pos] = previous_id
-            cand_attention_mask[:, pos] = previous_attention_mask
-        self.logger.debug(f"Best trigger token ID: {best_trigger_id}, Probability: {best_prob}")
+        # Process vocab in chunks to fit memory
+        for start in range(0, vocab_size, batch_size):
+            end = min(start + batch_size, vocab_size)
+            batch_tokens = torch.arange(start, end, device=device)
+
+            # Repeat the base inputs for each candidate token
+            expanded_inputs = cand_input_ids.repeat(batch_tokens.size(0), 1)
+            expanded_masks = cand_attention_mask.repeat(batch_tokens.size(0), 1)
+
+            # Replace position `pos` with each candidate token
+            expanded_inputs[:, pos] = batch_tokens.repeat_interleave(cand_input_ids.size(0))
+            expanded_masks[:, pos] = 1
+
+            # Forward pass
+            output_probs = self._simple_generate(expanded_inputs, expanded_masks)  # shape: [batch * cand_batch, vocab]
+
+            # Compute probability for target token
+            target_probs = output_probs[:, tgt_token_id].view(batch_tokens.size(0), -1).mean(dim=1)
+
+            # Find best token in this batch
+            max_prob, max_idx = torch.max(target_probs, dim=0)
+            if max_prob > best_prob:
+                best_prob = max_prob.item()
+                best_trigger_id = batch_tokens[max_idx].item()
+
+        # Restore original inputs
+        cand_input_ids[:, pos] = original_ids
+        cand_attention_mask[:, pos] = original_mask
+
+        self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)}, Probability: {best_prob}")
         return best_trigger_id
+
 
 
 
