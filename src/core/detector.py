@@ -558,7 +558,10 @@ class BAIT:
                 # Get corresponding trigger tokens from warmup_trigger_ids[:, i]
                 triggers = warmup_trigger_ids[:, i]
                 valid_trigger_ids = triggers[triggers != -1]
-                trigger_string = f"{self.tokenizer.decode(batch_input_ids)}, inserted trigger:  {self.tokenizer.decode(valid_trigger_ids)}"
+                decoded_inputs = self.tokenizer.batch_decode(batch_input_ids.tolist())
+                trigger_string = ", ".join(decoded_inputs)
+                trigger_string += f", inserted trigger: {self.tokenizer.decode(valid_trigger_ids.tolist() if not isinstance(valid_trigger_ids, int) else valid_trigger_ids)}"
+
 
         return q_score, invert_target, trigger_string
 
