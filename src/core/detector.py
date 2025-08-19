@@ -344,7 +344,7 @@ class BAIT:
         cand_attention_mask: torch.Tensor,
         tgt_token_id: int,
         pos: int,
-        batch_size: int = 1024,  # process vocab in chunks to avoid OOM
+        batch_size: int = 512,  # process vocab in chunks to avoid OOM
     ) -> int:
         """
         Vectorized search for the best trigger token in the pos-th position
