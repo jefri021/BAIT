@@ -140,22 +140,22 @@ class BAIT:
                 - The invert target (token IDs) for the potential backdoor
         """
 
-        # state = self.load_state()
+        state = self.load_state()
         best_target = BestTarget()
-        # batch_index = 0
-        # dataloader_iter = iter(self.dataloader)
-        # total = len(self.dataloader)  # Total batches (if available)
+        batch_index = 0
+        dataloader_iter = iter(self.dataloader)
+        total = len(self.dataloader)  # Total batches (if available)
 
-        # if state:
-        #     batch_index = state['batch_index']
-        #     best_target = state['best_target']
-        #     for _ in range(batch_index):
-        #         next(dataloader_iter)
-        #     self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target}")
+        if state:
+            batch_index = state['batch_index']
+            best_target = state['best_target']
+            for _ in range(batch_index):
+                next(dataloader_iter)
+            self.logger.info(f"Resuming from batch index {batch_index} with best target: {best_target}")
 
 
-        # for batch_inputs in tqdm(dataloader_iter, desc="Scanning data...", total=total - batch_index if total else None, initial=batch_index):
-        for batch_inputs in tqdm(self.dataloader, desc="Scanning data..."):
+        for batch_inputs in tqdm(dataloader_iter, desc="Scanning data...", total=total - batch_index if total else None, initial=batch_index):
+        # for batch_inputs in tqdm(self.dataloader, desc="Scanning data..."):
 
             input_ids = batch_inputs["input_ids"]
             attention_mask = batch_inputs["attention_mask"]
@@ -183,10 +183,10 @@ class BAIT:
                 break
 
             # save for each batch
-            # self.logger.info("Saving...")
-            # self.save_state(batch_index, best_target)
+            self.logger.info("Saving...")
+            self.save_state(batch_index, best_target)
 
-            # batch_index += 1
+            batch_index += 1
 
         if best_target.q_score > self.q_score_threshold:
             self.logger.info(f"Q-score is greater than threshold: {self.q_score_threshold}")
@@ -558,11 +558,13 @@ class BAIT:
                 # Get corresponding trigger tokens from warmup_trigger_ids[:, i]
                 triggers = warmup_trigger_ids[:, i]
                 valid_trigger_ids = triggers[triggers != -1]
+                valid_trigger_positions = (triggers != -1).nonzero()
+                if triggers.dim() == 1:
+                    valid_trigger_positions = valid_trigger_positions.flatten().tolist()
                 decoded_inputs = self.tokenizer.batch_decode(batch_input_ids.tolist())
                 trigger_string = ", ".join(decoded_inputs)
                 trigger_string += f", inserted trigger: {self.tokenizer.decode(valid_trigger_ids.tolist() if not isinstance(valid_trigger_ids, int) else valid_trigger_ids)}"
-
-
+                trigger_string += f", valid trigger positions: {valid_trigger_positions.tolist() if isinstance(valid_trigger_positions, torch.Tensor) else valid_trigger_positions}"
         return q_score, invert_target, trigger_string
 
     def scan_init_token(
