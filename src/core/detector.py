@@ -344,7 +344,7 @@ class BAIT:
         cand_attention_mask: torch.Tensor,
         tgt_token_id: int,
         pos: int,
-        batch_size: int = 20,  # process vocab in chunks to avoid OOM
+        batch_size: int = 40,  # process vocab in chunks to avoid OOM
         sampled_vocab_size: int = 2000,  # number of candidate tokens
     ) -> int:
         """
@@ -392,7 +392,7 @@ class BAIT:
                 best_trigger_id = batch_tokens[max_idx].item()
 
         if best_prob > prob_threshold:
-            self.logger.info(f"Best trigger found: {self.tokenizer.decode(best_trigger_id)} for newly discovered target {self.tokenizer.decode(best_trigger_id)} at pos {pos}, Probability: {best_prob}")
+            self.logger.info(f"Best trigger found: {best_trigger_id} for newly discovered target {self.tokenizer.decode(tgt_token_id)} at pos {pos}, Probability: {best_prob}")
         return best_trigger_id
 
 
