@@ -954,22 +954,21 @@ class BAIT:
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        temperature: float
+        T: float
     ) -> torch.Tensor:
         """
         Get next-token probabilities in a single forward pass.
         """
         outputs = self.model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
-            temperature=temperature
+            attention_mask=attention_mask
         )
         
         # logits shape: [batch_size, seq_len, vocab_size]
         logits = outputs.logits[:, -1, :]  
 
         # stable softmax over vocab
-        output_probs = torch.nn.functional.softmax(logits, dim=-1)
+        output_probs = self.stable_softmax(logits, dim=-1, temperature=T)
 
         return output_probs
 
