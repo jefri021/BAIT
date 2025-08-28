@@ -11,14 +11,19 @@ the core functionality for initializing and running backdoor scans on LLMs.
 
 Copyright (c) [2024] [PurduePAML]
 """
+from datetime import datetime
+import math
+from compression import gzip
 import torch
 import os
 import json
 import traceback
 from time import time, sleep
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Sequence, Any, Iterable
 from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer
+from sklearn.cluster import KMeans
+import torch.nn.functional as F
 from src.config.arguments import BAITArguments
 from openai import OpenAI
 from src.utils.constants import JUDGE_SYSTEM_PROMPT
@@ -30,7 +35,9 @@ from loguru import logger
 from src.models.model import build_model, parse_model_args
 from src.data.dataset import build_data_module
 import sys
-
+import hashlib
+from collections import defaultdict
+import random
 
 @dataclass
 class BestTarget:
@@ -81,6 +88,7 @@ class BAIT:
         self.device = device
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.id2group = self.load_or_build_groups("/kaggle/working/id2group.json")
 
 
     def save_state(self, batch_index: int, best_target: BestTarget):
@@ -127,6 +135,634 @@ class BAIT:
                 }
         except FileNotFoundError:
             return None
+        
+    def build_panel(self, L: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Make a small, reusable panel of contexts to probe token behavior.
+
+        Returns:
+            panel_inputs: [R, L] LongTensor
+            panel_masks:  [R, L] LongTensor in {0,1}
+        """
+        panel_texts = [
+            "I read the article about climate policy and",
+            "Please list the steps to connect to the Wi-Fi.",
+            "According to the report, the results show",
+            "He said, in other words,",
+            "In Python, a function can return",
+            "The value after the loop is",
+            "Here are three reasons why",
+            "The new research indicates that",
+            "First, consider the following example:",
+            "Note: when the file is missing, the program",
+            "As a reminder, the meeting begins at",
+            "Question: what is the main point of",
+            "If the input is empty, then",
+            "The equation f(x) = x + 1 implies that",
+            "She opened the door and said,",
+            "To reproduce the results, follow these steps:",
+            "After saving the file, restart the application and",
+            "It was cold; however, the device still",
+            "Open the settings (Preferences) and then select",
+            "For reference, the documentation mentions that",
+        ]
+
+        enc = self.tokenizer(
+            list(panel_texts),
+            padding="max_length",
+            truncation=True,
+            max_length=L,
+            return_tensors="pt",
+            add_special_tokens=True,
+        )
+        panel_inputs = enc["input_ids"]            # [R, L]
+        panel_masks  = enc["attention_mask"]       # [R, L]
+        return panel_inputs, panel_masks
+    
+    def get_space_prefix(self) -> str:
+        no_space = self.tokenizer.tokenize("the")
+        with_space = self.tokenizer.tokenize(" the")
+
+        if len(with_space) == 1 and with_space[0] != no_space[0]:
+            diff = with_space[0].replace(no_space[0], "")
+            return diff
+        return ""
+
+    def build_landmarks(self):
+        # base list without prefix
+        landmarks = [
+            "the","a","an","and","or","of","to","in","on","for",
+            "he","she","they","we","I",
+            "is","was","has","do",
+            ".",",",":",";","?","!","(",")","\"","'",
+            "0","1","2"
+        ]
+        prefix = self.get_space_prefix()
+
+        # prepend prefix only to word-like tokens (not punctuation/numbers)
+        word_like = set([
+            "the","a","an","and","or","of","to","in","on","for",
+            "he","she","they","we","I",
+            "is","was","has","do"
+        ])
+        landmarks_with_prefix = [
+            prefix + tok if tok in word_like else tok
+            for tok in landmarks
+        ]
+
+        return landmarks_with_prefix
+    
+    def _tensor_shape(t: torch.Tensor) -> Tuple[int, ...]:
+        return tuple(int(x) for x in t.shape)
+
+    def _resolve_landmark_ids(self, landmarks: Optional[Sequence[Any]]) -> List[int]:
+        """Resolve landmark specs (strings or ids) to unique, sorted token ids."""
+        if not landmarks:
+            return []
+        ids: List[int] = []
+        for lm in landmarks:
+            if isinstance(lm, int):
+                ids.append(lm)
+            else:
+                tid = self.tokenizer.convert_tokens_to_ids(lm)
+                if tid is None or tid < 0:
+                    enc = self.tokenizer.encode(str(lm), add_special_tokens=False)
+                    if enc:
+                        tid = enc[0]
+                    else:
+                        continue
+                ids.append(tid)
+        return sorted(set(ids))
+
+    def compute_groups_config_hash(
+        self,
+        panel_inputs: torch.Tensor,
+        panel_masks: torch.Tensor,
+        positions: Sequence[int],
+        temps: Sequence[float],
+        landmarks: Optional[Sequence[Any]],
+        n_groups: int,
+        topk_mass: int,
+        chunk_tokens: int,
+        compress_dim: int,
+    ) -> str:
+        """Build a stable hash for the grouping configuration."""
+        cfg = {
+            "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
+            "vocab_size": int(self.tokenizer.vocab_size),
+            "bos": getattr(self.tokenizer, "bos_token_id", None),
+            "eos": getattr(self.tokenizer, "eos_token_id", None),
+            "pad": getattr(self.tokenizer, "pad_token_id", None),
+            "panel_inputs_shape": self._tensor_shape(panel_inputs),
+            "panel_masks_shape": self._tensor_shape(panel_masks),
+            "positions": [p for p in positions],
+            "temps": [t for t in temps],
+            "landmarks_ids": self._resolve_landmark_ids(landmarks),
+            "n_groups": n_groups,
+            "topk_mass": topk_mass,
+            "chunk_tokens": chunk_tokens,
+            "compress_dim": compress_dim
+        }
+
+        blob = json.dumps(cfg, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+
+    # ------------------------------------------------------------
+    # 1) Save / Load (gzip JSON). We store labels as a list of len V.
+    # ------------------------------------------------------------
+    def save_token_groups(
+        self,
+        path: str,
+        id2group: Dict[int, int],
+        config_hash: str,
+        extra_meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Save mapping and metadata.
+        File format (gzip JSON):
+        {
+            "meta": {
+            "created_at": ISO8601,
+            "tokenizer_name": "...",
+            "vocab_size": V,
+            "config_hash": "...",
+            ...extra_meta
+            },
+            "labels": [g0, g1, ..., g(V-1)]  # group for token id == index
+        }
+        """
+        V = self.tokenizer.vocab_size
+        labels = [-1] * V
+        for tid, gid in id2group.items():
+            if 0 <= int(tid) < V:
+                labels[int(tid)] = int(gid)
+
+        meta = {
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
+            "vocab_size": V,
+            "config_hash": config_hash,
+        }
+        if extra_meta:
+            meta.update(extra_meta)
+
+        payload = {"meta": meta, "labels": labels}
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            json.dump(payload, f)
+
+    def load_token_groups(self, path: str) -> Tuple[Dict[int, int], Dict[str, Any]]:
+        """
+        Load mapping and metadata. Returns (id2group, meta).
+        Raises FileNotFoundError if path missing.
+        """
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            payload = json.load(f)
+        labels: List[int] = payload["labels"]
+        id2group = {i: int(g) for i, g in enumerate(labels)}
+        meta = payload.get("meta", {})
+        return id2group, meta
+
+
+    # ------------------------------------------------------------
+    # 2) Cache-first wrapper around the sklearn builder
+    # ------------------------------------------------------------
+    def load_or_build_groups(
+        self,
+        cache_path: str,
+        positions: Sequence[int] = (0, -1, 1),
+        temps: Sequence[float] = (0.7, 1.0, 1.3),
+        landmarks: Optional[Sequence[Any]] = None,
+        n_groups: int = 128,
+        topk_mass: int = 5,
+        chunk_tokens: int = 512,
+        compress_dim: int = 24
+    ) -> Dict[int, int]:
+        """
+        Try to load cached groups. If missing/mismatched, build and save.
+        Returns: dict {token_id: group_id} (all vocab ids present; specials → -1)
+        """
+        # Load panel inputs and masks
+        panel_inputs, panel_masks = self.build_panel()
+        # Load landmarks
+        landmarks = self.build_landmarks()
+        # Compute expected config hash
+        expected_hash = self.compute_groups_config_hash(
+            self.tokenizer,
+            panel_inputs,
+            panel_masks,
+            positions=positions,
+            temps=temps,
+            landmarks=landmarks,
+            n_groups=n_groups,
+            topk_mass=topk_mass,
+            chunk_tokens=chunk_tokens,
+            compress_dim=compress_dim
+        )
+
+        # Try load
+        try:
+            id2group, meta = self.load_token_groups(cache_path)
+            same_vocab = meta.get("vocab_size", -1) == self.tokenizer.vocab_size
+            same_hash = meta.get("config_hash") == expected_hash
+            if same_vocab and same_hash:
+                self.logger.info("Loading token groups from cache...")
+                return id2group
+            # else, fall through to rebuild
+        except FileNotFoundError:
+            pass
+
+        self.logger.info("Building token groups (this may take a while)...")
+
+        # Build fresh
+        id2group = self.build_token_groups(
+            panel_inputs=panel_inputs,
+            panel_masks=panel_masks,
+            positions=positions,
+            temps=temps,
+            landmarks=landmarks,
+            n_groups=n_groups,
+            topk_mass=topk_mass,
+            chunk_tokens=chunk_tokens,
+            compress_dim=compress_dim,
+        )
+
+        # Save
+        self.logger.info("Saving token groups to cache...")
+        self.save_token_groups(
+            cache_path,
+            id2group,
+            tokenizer=self.tokenizer,
+            config_hash=expected_hash,
+            extra_meta={
+                "positions": [int(p) for p in positions],
+                "temps": [float(t) for t in temps],
+                "landmarks_ids": self._resolve_landmark_ids(self.tokenizer, landmarks),
+                "n_groups": int(n_groups),
+                "topk_mass": int(topk_mass),
+                "chunk_tokens": int(chunk_tokens),
+                "compress_dim": int(compress_dim),
+                "builder": "sklearn",
+            },
+        )
+        return id2group
+    
+    def build_token_groups(
+        self,
+        panel_inputs: torch.Tensor,                 # [R, L]
+        panel_masks: torch.Tensor,                  # [R, L]
+        positions,     # -1 => L-1
+        temps,
+        landmarks,  # token strings or ids; optional
+        n_groups: int = 128,
+        topk_mass: int = 5,
+        chunk_tokens: int = 512,                    # how many token ids per GPU pass
+        compress_dim: int = 12,                     # random projection output dim (<= features => no-op)
+    ) -> Dict[int, int]:
+        """
+        Target-independent, black-box Stage-A grouping:
+        • builds per-(token, position) behavioral fingerprints (entropy/top-k/optional landmarks)
+        • per-position z-score normalization
+        • combines across positions as [mean || std]
+        • random-projection compression
+        • sklearn KMeans clustering → groups
+        • returns {token_id: group_id} for all vocab ids (specials mapped to -1)
+        """
+        device = self.device
+        panel_inputs = panel_inputs.to(device)
+        panel_masks  = panel_masks.to(device)
+        R, L = panel_inputs.shape
+
+        # Resolve positions (turn -1 into L-1, validate)
+        pos_list: List[int] = []
+        for p in positions:
+            pos = L - 1 if p == -1 else int(p)
+            if not (0 <= pos < L):
+                raise ValueError(f"Position {p} resolved to {pos} is out of range for L={L}.")
+            pos_list.append(pos)
+
+        # token ids (default: all except specials)
+        specials = {
+            getattr(self.tokenizer, "bos_token_id", None),
+            getattr(self.tokenizer, "eos_token_id", None),
+            getattr(self.tokenizer, "pad_token_id", None),
+        }
+        allowed = [i for i in range(self.tokenizer.vocab_size) if i not in specials]
+        token_ids = torch.tensor(allowed, dtype=torch.long, device=device)
+        N = token_ids.numel()
+
+        # Landmarks (optional) → ids
+        landmark_ids: Optional[torch.Tensor] = None
+        if landmarks:
+            lm_ids: List[int] = []
+            for lm in landmarks:
+                tid = self.tokenizer.convert_tokens_to_ids(lm)
+                if tid is None or tid < 0:
+                    continue
+                lm_ids.append(tid)
+            if lm_ids:
+                lm_ids = sorted(set(lm_ids))
+                landmark_ids = torch.tensor(lm_ids, dtype=torch.long, device=device)
+
+        # ---------- helpers ----------
+        def features_for_chunk_at_pos(z_chunk: torch.Tensor, pos: int) -> torch.Tensor:
+            """
+            Compute per-temp, per-token features for one position.
+            Returns: [Nc, len(temps)*(4 + 2*K)]  where K = len(landmarks) or 0
+                For each temperature:
+                H_mean, H_std, topK_mean, topK_std, (optional) LP_mean[K], LP_std[K]
+            """
+            Nc = z_chunk.numel()
+            # base panels repeated per token id (do once, reuse across temps)
+            base_inp = panel_inputs.repeat(Nc, 1)  # [Nc*R, L]
+            base_msk = panel_masks.repeat(Nc, 1)   # [Nc*R, L]
+            base_inp[:, pos] = z_chunk.repeat_interleave(R)
+            base_msk[:, pos] = 1
+
+            per_temp_blocks: List[torch.Tensor] = []
+            for temp in temps:
+                probs = self._simple_generate(base_inp, base_msk, temp)        # [Nc*R, V]
+                p = probs.clamp_min(1e-12)
+
+                # Entropy per row: sum(-p log p)
+                H = (-p * p.log()).sum(dim=1)                                      # [Nc*R]
+                # Top-k mass per row
+                top_mass = torch.topk(probs, k=topk_mass, dim=1).values.sum(dim=1)  # [Nc*R]
+
+                # Aggregate over R contexts
+                H_mean  = H.view(Nc, R).mean(dim=1)                                 # [Nc]
+                H_std   = H.view(Nc, R).std(dim=1)                                  # [Nc]
+                Tm_mean = top_mass.view(Nc, R).mean(dim=1)                          # [Nc]
+                Tm_std  = top_mass.view(Nc, R).std(dim=1)                           # [Nc]
+
+                if landmark_ids is not None and landmark_ids.numel() > 0:
+                    LP = probs[:, landmark_ids]                                     # [Nc*R, K]
+                    K = LP.size(1)
+                    LP_mean = LP.view(Nc, R, K).mean(dim=1)                         # [Nc, K]
+                    LP_std  = LP.view(Nc, R, K).std(dim=1)                          # [Nc, K]
+                    block = torch.cat(
+                        [H_mean[:, None], H_std[:, None], Tm_mean[:, None], Tm_std[:, None], LP_mean, LP_std],
+                        dim=1
+                    )                                                               # [Nc, 4+2K]
+                else:
+                    block = torch.stack([H_mean, H_std, Tm_mean, Tm_std], dim=1)    # [Nc, 4]
+
+                per_temp_blocks.append(block)
+
+            return torch.cat(per_temp_blocks, dim=1)                                 # [Nc, Dp]
+
+        def zscore_per_position(X: torch.Tensor) -> torch.Tensor:
+            """Z-score normalize features per position across tokens: X -> (X-mu)/sigma."""
+            mu = X.mean(dim=0, keepdim=True)
+            sd = X.std(dim=0, keepdim=True) + 1e-8
+            return (X - mu) / sd
+
+        def random_project(X: torch.Tensor, out_dim: int) -> torch.Tensor:
+            """
+            Dense Gaussian random projection to out_dim, then L2 normalize.
+            If out_dim >= D, returns L2-normalized X.
+            """
+            X = X.to(dtype=torch.float32)
+            N, D = X.shape
+            if out_dim is None or out_dim <= 0 or out_dim >= D:
+                Y = F.normalize(X, p=2, dim=1)
+                return Y
+            # Gaussian RP: W ~ N(0, 1/sqrt(D))
+            W = torch.randn((D, out_dim), device=X.device, dtype=X.dtype) / math.sqrt(D)
+            Y = X @ W
+            return F.normalize(Y, p=2, dim=1)
+
+        # -------------------------------------------------------
+        # Build per-position feature matrices for all ids
+        # -------------------------------------------------------
+        per_pos_feats: List[torch.Tensor] = []
+        for pos in pos_list:
+            blocks: List[torch.Tensor] = []
+            for start in range(0, N, chunk_tokens):
+                end = min(start + chunk_tokens, N)
+                z_chunk = token_ids[start:end]  # [Nc]
+                feats = features_for_chunk_at_pos(z_chunk, pos)  # [Nc, Dp]
+                blocks.append(feats)
+            Xp = torch.cat(blocks, dim=0)       # [N, Dp] features for this position
+            Xp = zscore_per_position(Xp)        # remove slot bias
+            per_pos_feats.append(Xp)
+
+        # -------------------------------------------------------
+        # Combine across positions: [mean || std] (pos-robustness)
+        # -------------------------------------------------------
+        Xstack = torch.stack(per_pos_feats, dim=0)  # [P, N, Dp]
+        X_mean = Xstack.mean(dim=0)                 # [N, Dp]
+        X_std  = Xstack.std(dim=0)                  # [N, Dp]
+        X_all  = torch.cat([X_mean, X_std], dim=1)  # [N, 2*Dp]
+
+        # -------------------------------------------------------
+        # Compress (RP) + sklearn KMeans
+        # -------------------------------------------------------
+        Xc = random_project(X_all, out_dim=compress_dim)        # [N, d]
+        Xc_np = Xc.detach().cpu().numpy()                       # sklearn expects numpy
+
+        self.logger.info("Clustering token groups...")
+
+        km = KMeans(n_clusters=n_groups, n_init="auto")  # clean sklearn API; no random_state
+        labels_np = km.fit_predict(Xc_np)
+
+        # Map ids
+        id2group = {int(tid.item()): int(lbl) for tid, lbl in zip(token_ids, torch.from_numpy(labels_np))}
+
+        # Add entries for the rest of the vocab (e.g., specials) as -1
+        for vid in range(self.tokenizer.vocab_size):
+            if vid not in id2group:
+                id2group[vid] = -1
+
+        return id2group
+    
+    def _score_tokens_batch(
+        self,
+        base_input_ids: torch.Tensor,        # [W, L]
+        base_attention_mask: torch.Tensor,   # [W, L]
+        candidate_token_ids: torch.LongTensor,  # [Nc]
+        tgt_token_id: int,
+        pos: int,
+        chunk: int = 1024,
+    ) -> torch.Tensor:
+        """
+        For each token z in candidate_token_ids, overwrite column `pos` in all W rows,
+        compute next-token probs, and return mean P(next=tgt) across W. Shape: [Nc].
+        """
+        device = self.device
+        W = base_input_ids.size(0)
+        Nc = candidate_token_ids.numel()
+        scores = torch.empty(Nc, device=device, dtype=torch.float32)
+
+        for start in range(0, Nc, chunk):
+            end = min(start + chunk, Nc)
+            z = candidate_token_ids[start:end]                       # [Nc']
+            # Expand panel rows for each token
+            inp = base_input_ids.repeat(z.size(0), 1).clone()        # [Nc'*W, L]
+            msk = base_attention_mask.repeat(z.size(0), 1).clone()   # [Nc'*W, L]
+            # Put token z at column `pos` for its own W rows
+            inp[:, pos] = z.repeat_interleave(W)
+            msk[:, pos] = 1
+            probs = self._simple_generate(inp, msk)                  # [Nc'*W, V]
+            # average P(next = tgt) across W rows
+            s = probs[:, tgt_token_id].view(z.size(0), W).mean(dim=1)  # [Nc']
+            scores[start:end] = s
+        return scores
+
+    def _stageA_group_filter(
+        self,
+        base_input_ids: torch.Tensor,        # [W, L]
+        base_attention_mask: torch.Tensor,   # [W, L]
+        id2group: dict[int, int],
+        tgt_token_id: int,
+        pos: int,
+        reps_per_group: int = 4,
+        keep_frac: float = 0.33,
+        max_pool: int = 1000
+    ) -> torch.LongTensor:
+        """
+        Uses self.id2group to:
+        • sample a few reps per group → score groups
+        • keep top fraction of groups
+        • expand to token pool, capped to stageA_max_pool
+        Returns: LongTensor [M] of survivor token ids.
+        """
+        assert hasattr(self, "id2group") and self.id2group, "self.id2group must be set"
+        # Build group -> token ids
+        groups = defaultdict(list)
+        V = self.tokenizer.vocab_size
+        bos = getattr(self.tokenizer, "bos_token_id", None)
+        eos = getattr(self.tokenizer, "eos_token_id", None)
+        pad = getattr(self.tokenizer, "pad_token_id", None)
+        specials = {bos, eos, pad}
+
+        for tid in range(V):
+            gid = id2group.get(tid, -1)
+            if gid >= 0 and tid not in specials:
+                groups[gid].append(tid)
+
+        if not groups:
+            return torch.empty(0, dtype=torch.long, device=base_input_ids.device)
+
+        # score each group by sampling a few reps
+        scored = []
+        for gid, ids in groups.items():
+            if len(ids) == 0:
+                continue
+            sample = random.sample(ids, reps_per_group)
+            sample = torch.tensor(sample, device=self.device, dtype=torch.long)
+            s = self._score_tokens_batch(base_input_ids, base_attention_mask, sample, tgt_token_id, pos).mean().item()
+            scored.append((gid, s))
+
+        if not scored:
+            return torch.empty(0, dtype=torch.long, device=base_input_ids.device)
+
+        # keep top fraction of groups
+        k_keep = int(math.ceil(len(scored) * keep_frac))
+        top_groups = [gid for gid, _ in sorted(scored, key=lambda x: x[1], reverse=True)[:k_keep]]
+
+        # expand to full candidate pool
+        pool = []
+        for gid in top_groups:
+            pool.extend(groups[gid])
+
+        # optionally cap pool size
+        if max_pool and len(pool) > max_pool:
+            pool = random.sample(pool, max_pool)
+
+        return torch.tensor(pool, device=base_input_ids.device, dtype=torch.long)
+
+
+    def _stageB_successive_halving(
+    self,
+        base_input_ids: torch.Tensor,        # [W, L]
+        base_attention_mask: torch.Tensor,   # [W, L]
+        candidates: torch.LongTensor,        # [M]
+        tgt_token_id: int,
+        pos: int,
+        rounds: int = 0,
+        keep_frac: float = 0.5,
+        final_k: int = 256,
+    ) -> Tuple[int, float]:
+        """
+        If self.stageB_halving_rounds == 0: one-shot score all candidates, return max.
+        Else: do rounds of keep_frac halving until ≤ final_k remain; return best id + score.
+        """
+        if candidates.numel() == 0:
+            return -1, -1.0
+
+        cur = candidates
+        if rounds <= 0:
+            # one-pass: score all, pick max
+            scores = self._score_tokens_batch(base_input_ids, base_attention_mask, cur, tgt_token_id, pos)
+            best_idx = int(torch.argmax(scores).item())
+            return int(cur[best_idx].item()), float(scores[best_idx].item())
+
+        # halving loop
+        for _ in range(rounds):
+            if cur.numel() <= final_k:
+                break
+            scores = self._score_tokens_batch(base_input_ids, base_attention_mask, cur, tgt_token_id, pos)
+            order = torch.argsort(scores, descending=True)
+            k = max(1, int(math.ceil(cur.numel() * keep_frac)))
+            cur = cur[order[:k]]
+
+        # final pick
+        scores = self._score_tokens_batch(base_input_ids, base_attention_mask, cur, tgt_token_id, pos)
+        best_idx = int(torch.argmax(scores).item())
+        return int(cur[best_idx].item()), float(scores[best_idx].item())
+    
+    def _search_best_trigger_token(
+        self,
+        cand_input_ids: torch.Tensor,        # [W, L]
+        cand_attention_mask: torch.Tensor,   # [W, L]
+        tgt_token_id: int,
+        pos: int,
+    ) -> int:
+        """
+        Stage A: use id2group to select promising groups and expand to a token pool.
+        Stage B: evaluate survivors (optionally with successive halving) and return best token id.
+        Returns -1 if nothing promising is found.
+        """
+        device = cand_input_ids.device
+
+        # --- Stage A: group testing (needs self.id2group precomputed & set) ---
+        try:
+            pool = self._stageA_group_filter(cand_input_ids, cand_attention_mask, tgt_token_id, pos)  # [M]
+        except AssertionError:
+            # id2group not set; fallback to a simple random sample of vocab as before
+            self.logger.warning("id2group not set; falling back to random subset for trigger search.")
+            V = self.tokenizer.vocab_size
+            specials = {
+                getattr(self.tokenizer, "bos_token_id", None),
+                getattr(self.tokenizer, "eos_token_id", None),
+                getattr(self.tokenizer, "pad_token_id", None),
+            }
+            allowed = [i for i in range(V) if i not in specials]
+            sample_sz = int(getattr(self, "stageA_max_pool", 4000))
+            pool = torch.tensor(random.sample(allowed, min(sample_sz, len(allowed))),
+                                device=device, dtype=torch.long)
+
+        if pool.numel() == 0:
+            return -1
+
+        # --- Stage B: evaluate survivors (successive halving optional) ---
+        best_tid, best_score = self._stageB_successive_halving(
+            cand_input_ids, cand_attention_mask, pool, tgt_token_id, pos
+        )
+
+        # Optional: log only if clearly strong
+        if best_tid != -1:
+            tok_str = self.tokenizer.convert_ids_to_tokens([best_tid])[0]
+            if best_score >= 0.6:
+                self.logger.info(f"[Trigger search] pos={pos}  best_id={best_tid} ('{tok_str}')  score={best_score:.4f}")
+            else:
+                self.logger.debug(f"[Trigger search] pos={pos}  best_id={best_tid} ('{tok_str}')  score={best_score:.4f}")
+
+        return best_tid
+
+
 
     @torch.no_grad()
     def run(self) -> ScanResult:
@@ -318,14 +954,16 @@ class BAIT:
     def _simple_generate(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor
+        attention_mask: torch.Tensor,
+        temperature: float
     ) -> torch.Tensor:
         """
         Get next-token probabilities in a single forward pass.
         """
         outputs = self.model(
             input_ids=input_ids,
-            attention_mask=attention_mask
+            attention_mask=attention_mask,
+            temperature=temperature
         )
         
         # logits shape: [batch_size, seq_len, vocab_size]
@@ -335,67 +973,6 @@ class BAIT:
         output_probs = torch.nn.functional.softmax(logits, dim=-1)
 
         return output_probs
-
-
-
-    def _search_best_trigger_token(
-        self,
-        cand_input_ids: torch.Tensor,
-        cand_attention_mask: torch.Tensor,
-        tgt_token_id: int,
-        pos: int,
-        batch_size: int = 40,  # process vocab in chunks to avoid OOM
-        sampled_vocab_size: int = 2000,  # number of candidate tokens
-    ) -> int:
-        """
-        Vectorized search for the best trigger token in the pos-th position
-        that maximizes the probability of the target token.
-        """
-
-        full_vocab_size = self.tokenizer.vocab_size
-        device = cand_input_ids.device
-
-        best_trigger_id = -1
-        best_prob = -1.0
-        prob_threshold = 0.6  # Minimum probability threshold to consider a token
-
-        candidate_vocab = torch.randint(
-            low=0,
-            high=full_vocab_size,
-            size=(sampled_vocab_size,),
-            device=device
-        )
-
-        # Process vocab in chunks to fit memory
-        for start in range(0, candidate_vocab.size(0), batch_size):
-            end = min(start + batch_size, candidate_vocab.size(0))
-            batch_tokens = torch.arange(start, end, device=device)
-
-            # Repeat the base inputs for each candidate token
-            expanded_inputs = cand_input_ids.repeat(batch_tokens.size(0), 1)
-            expanded_masks = cand_attention_mask.repeat(batch_tokens.size(0), 1)
-
-            # Replace position `pos` with each candidate token
-            expanded_inputs[:, pos] = batch_tokens.repeat_interleave(cand_input_ids.size(0))
-            expanded_masks[:, pos] = 1
-
-            # Forward pass
-            output_probs = self._simple_generate(expanded_inputs, expanded_masks)  # shape: [batch * cand_batch, vocab]
-
-            # Compute probability for target token
-            target_probs = output_probs[:, tgt_token_id].view(batch_tokens.size(0), -1).mean(dim=1)
-
-            # Find best token in this batch
-            max_prob, max_idx = torch.max(target_probs, dim=0)
-            if max_prob > best_prob:
-                best_prob = max_prob.item()
-                best_trigger_id = batch_tokens[max_idx].item()
-
-        if best_prob > prob_threshold:
-            self.logger.info(f"Best trigger found: {best_trigger_id} for newly discovered target {self.tokenizer.decode(tgt_token_id)} at pos {pos}, Probability: {best_prob}")
-        return best_trigger_id
-
-
 
 
     def warm_up_inversion(
