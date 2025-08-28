@@ -398,7 +398,7 @@ class BAIT:
             extra_meta={
                 "positions": [int(p) for p in positions],
                 "temps": [float(t) for t in temps],
-                "landmarks_ids": self._resolve_landmark_ids(self.tokenizer, landmarks),
+                "landmarks_ids": self._resolve_landmark_ids(landmarks),
                 "n_groups": int(n_groups),
                 "topk_mass": int(topk_mass),
                 "chunk_tokens": int(chunk_tokens),
