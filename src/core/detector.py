@@ -212,7 +212,7 @@ class BAIT:
 
         return landmarks_with_prefix
     
-    def _tensor_shape(t: torch.Tensor) -> Tuple[int, ...]:
+    def _tensor_shape(self, t: torch.Tensor) -> Tuple[int, ...]:
         return tuple(int(x) for x in t.shape)
 
     def _resolve_landmark_ids(self, landmarks: Optional[Sequence[Any]]) -> List[int]:
