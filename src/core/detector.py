@@ -13,7 +13,7 @@ Copyright (c) [2024] [PurduePAML]
 """
 from datetime import datetime
 import math
-from compression import gzip
+import gzip
 import torch
 import os
 import json
