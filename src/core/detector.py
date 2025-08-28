@@ -349,9 +349,8 @@ class BAIT:
         landmarks = self.build_landmarks()
         # Compute expected config hash
         expected_hash = self.compute_groups_config_hash(
-            self.tokenizer,
-            panel_inputs,
-            panel_masks,
+            panel_inputs=panel_inputs,
+            panel_masks=panel_masks,
             positions=positions,
             temps=temps,
             landmarks=landmarks,
