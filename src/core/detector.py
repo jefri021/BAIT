@@ -336,7 +336,7 @@ class BAIT:
         landmarks: Optional[Sequence[Any]] = None,
         n_groups: int = 128,
         topk_mass: int = 5,
-        chunk_tokens: int = 512,
+        chunk_tokens: int = 256,
         compress_dim: int = 24
     ) -> Dict[int, int]:
         """
@@ -414,10 +414,10 @@ class BAIT:
         positions,     # -1 => L-1
         temps,
         landmarks,  # token strings or ids; optional
-        n_groups: int = 128,
-        topk_mass: int = 5,
-        chunk_tokens: int = 512,                    # how many token ids per GPU pass
-        compress_dim: int = 12,                     # random projection output dim (<= features => no-op)
+        n_groups: int,
+        topk_mass: int,
+        chunk_tokens: int,                    # how many token ids per GPU pass
+        compress_dim: int,                     # random projection output dim (<= features => no-op)
     ) -> Dict[int, int]:
         """
         Target-independent, black-box Stage-A grouping:
