@@ -5,7 +5,7 @@ from loguru import logger
 def main():
     model, tokenizer = build_model()
     grouper = Grouper(model, tokenizer, logger, model.device)
-    id2group = grouper.group()
+    id2group = grouper.group(cache_path="/kaggle/working/group_cache.json")
     logger.info(f"id2group: {id2group}")
 
 if __name__ == "__main__":
