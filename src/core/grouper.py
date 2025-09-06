@@ -258,6 +258,7 @@ class Grouper:
     # ------------------------------------------------------------
     # 2) Cache-first wrapper around the sklearn builder
     # ------------------------------------------------------------
+    @torch.no_grad()
     def group(
         self,
         cache_path: str = None,
@@ -265,7 +266,7 @@ class Grouper:
         temps: Sequence[float] = (0.7, 1.0, 1.3),
         n_groups: int = 128,
         topk_mass: int = 5,
-        chunk_tokens: int = 512,
+        chunk_tokens: int = 64,
         compress_dim: int = 24
     ) -> Dict[int, int]:
         """
