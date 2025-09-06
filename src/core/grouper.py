@@ -4,27 +4,11 @@ import gzip
 import torch
 import os
 import json
-import traceback
-from time import time, sleep
 from typing import Optional, List, Tuple, Dict, Sequence, Any, Iterable
-from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer
 from sklearn.cluster import KMeans
 import torch.nn.functional as F
-from src.config.arguments import BAITArguments
-from openai import OpenAI
-from src.utils.constants import JUDGE_SYSTEM_PROMPT
-from src.config.arguments import ModelArguments, DataArguments, ScanArguments
-from src.utils.helpers import extract_tag
-from openai import APIError, RateLimitError, APIConnectionError
-from dataclasses import dataclass
-from loguru import logger
-from src.models.model import build_model, parse_model_args
-from src.data.dataset import build_data_module
-import sys
 import hashlib
-from collections import defaultdict
-import random
 
 
 
@@ -39,6 +23,44 @@ class Grouper:
         self.tokenizer = tokenizer
         self.device = model.device
         self.logger = logger
+
+    
+    def _simple_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        T: float
+    ) -> torch.Tensor:
+        """
+        Get next-token probabilities in a single forward pass.
+        """
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask
+        )
+        
+        # logits shape: [batch_size, seq_len, vocab_size]
+        logits = outputs.logits[:, -1, :]  
+
+        # stable softmax over vocab
+        output_probs = self.stable_softmax(logits, dim=-1, temperature=T)
+
+        return output_probs
+    
+
+    def stable_softmax(self, logits, dim=-1, temperature=1.0):
+        """Numerically stable softmax implementation"""
+        # Subtract max for numerical stability
+        logits = logits / temperature
+        max_logits = torch.max(logits, dim=dim, keepdim=True)[0]
+        exp_logits = torch.exp(logits - max_logits)
+        sum_exp = torch.sum(exp_logits, dim=dim, keepdim=True)
+        
+        # Add epsilon to prevent division by zero
+        eps = 1e-12
+        return exp_logits / (sum_exp + eps)
+    
+
 
     def build_panel(self, L: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
         """
