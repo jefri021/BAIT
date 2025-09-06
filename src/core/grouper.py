@@ -33,12 +33,11 @@ class Grouper:
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
-        logger,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+        logger):
         logger.info("Start Grouping...")
         self.model = model
         self.tokenizer = tokenizer
-        self.device = device
+        self.device = model.device
         self.logger = logger
 
     def build_panel(self, L: int = 64) -> Tuple[torch.Tensor, torch.Tensor]:
