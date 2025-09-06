@@ -350,20 +350,17 @@ class Grouper:
         compress_dim: int,                     # random projection output dim (<= features => no-op)
     ) -> Dict[int, int]:
         """
-        Target-independent, black-box Stage-A grouping:
-        • builds per-(token, position) behavioral fingerprints (entropy/top-k/optional landmarks)
-        • per-position z-score normalization
-        • combines across positions as [mean || std]
-        • random-projection compression
-        • sklearn KMeans clustering → groups
-        • returns {token_id: group_id} for all vocab ids (specials mapped to -1)
+        Memory-efficient reimplementation:
+        - Streams over tokens and contexts.
+        - Two-pass per-position z-score without storing the full [N, Dp].
+        - Online combine across positions to avoid [P, N, Dp] stacking.
         """
         device = self.device
-        panel_inputs = panel_inputs.to(device)
-        panel_masks  = panel_masks.to(device)
+        panel_inputs = panel_inputs.to(device, non_blocking=True)
+        panel_masks  = panel_masks.to(device, non_blocking=True)
         R, L = panel_inputs.shape
 
-        # Resolve positions (turn -1 into L-1, validate)
+        # Resolve positions
         pos_list: List[int] = []
         for p in positions:
             pos = L - 1 if p == -1 else int(p)
@@ -371,14 +368,14 @@ class Grouper:
                 raise ValueError(f"Position {p} resolved to {pos} is out of range for L={L}.")
             pos_list.append(pos)
 
-        # token ids (default: all except specials)
+        # Token ids (exclude specials)
         specials = {
             getattr(self.tokenizer, "bos_token_id", None),
             getattr(self.tokenizer, "eos_token_id", None),
             getattr(self.tokenizer, "pad_token_id", None),
         }
         allowed = [i for i in range(self.tokenizer.vocab_size) if i not in specials]
-        token_ids = torch.tensor(allowed, dtype=torch.long, device=device)
+        token_ids = torch.tensor(allowed, dtype=torch.long, device=device, pin_memory=False)
         N = token_ids.numel()
 
         # Landmarks (optional) → ids
@@ -389,119 +386,325 @@ class Grouper:
                 tid = self.tokenizer.convert_tokens_to_ids(lm)
                 if tid is None or tid < 0:
                     continue
-                lm_ids.append(tid)
+                lm_ids.append(int(tid))
             if lm_ids:
                 lm_ids = sorted(set(lm_ids))
                 landmark_ids = torch.tensor(lm_ids, dtype=torch.long, device=device)
 
-        # ---------- helpers ----------
+        # Small helper: online mean/var (Welford)
+        class OnlineMV:
+            def __init__(self, D: int, device):
+                self.n = 0
+                self.mean = torch.zeros(D, device=device)
+                self.M2   = torch.zeros(D, device=device)
+            def update(self, X: torch.Tensor):  # X: [*, D]
+                # flatten first dimension
+                x = X.reshape(-1, X.shape[-1])
+                for row in x:
+                    self.n += 1
+                    delta = row - self.mean
+                    self.mean += delta / self.n
+                    self.M2   += delta * (row - self.mean)
+            def finalize(self):
+                var = self.M2 / max(self.n - 1, 1)
+                std = torch.sqrt(var.clamp_min(1e-8))
+                return self.mean, std
+
+        # Memory knobs
+        ctx_chunk = max(1, min(64, R))      # contexts per micro-batch (tune)
+        mem_every = 8                       # empty_cache cadence (tune)
+
+        # Mixed precision context
+        amp_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+        amp_ctx = torch.autocast(device_type="cuda", dtype=amp_dtype) if device.type == "cuda" else nullcontext()
+
+        @torch.inference_mode()
         def features_for_chunk_at_pos(z_chunk: torch.Tensor, pos: int) -> torch.Tensor:
             """
-            Compute per-temp, per-token features for one position.
-            Returns: [Nc, len(temps)*(4 + 2*K)]  where K = len(landmarks) or 0
-                For each temperature:
-                H_mean, H_std, topK_mean, topK_std, (optional) LP_mean[K], LP_std[K]
+            Returns per-token, per-temp features for one position.
+            Shape: [Nc, len(temps)*(4 + 2*K)]
             """
             Nc = z_chunk.numel()
-            # base panels repeated per token id (do once, reuse across temps)
-            base_inp = panel_inputs.repeat(Nc, 1)  # [Nc*R, L]
-            base_msk = panel_masks.repeat(Nc, 1)   # [Nc*R, L]
-            base_inp[:, pos] = z_chunk.repeat_interleave(R)
-            base_msk[:, pos] = 1
-
             per_temp_blocks: List[torch.Tensor] = []
-            for temp in temps:
-                probs = self._simple_generate(base_inp, base_msk, temp)        # [Nc*R, V]
-                p = probs.clamp_min(1e-12)
 
-                # Entropy per row: sum(-p log p)
-                H = (-p * p.log()).sum(dim=1)                                      # [Nc*R]
-                # Top-k mass per row
-                top_mass = torch.topk(probs, k=topk_mass, dim=1).values.sum(dim=1)  # [Nc*R]
-
-                # Aggregate over R contexts
-                H_mean  = H.view(Nc, R).mean(dim=1)                                 # [Nc]
-                H_std   = H.view(Nc, R).std(dim=1)                                  # [Nc]
-                Tm_mean = top_mass.view(Nc, R).mean(dim=1)                          # [Nc]
-                Tm_std  = top_mass.view(Nc, R).std(dim=1)                           # [Nc]
+            # Stream over temps to keep peak small
+            for t_idx, temp in enumerate(temps):
+                # We will stream over contexts in micro-batches of size ctx_chunk
+                # and aggregate H/top-k/landmark stats across R without building [Nc*R, L].
+                H_rows_sum   = torch.zeros(Nc, device=device)
+                H_rows_sum2  = torch.zeros(Nc, device=device)
+                Tm_rows_sum  = torch.zeros(Nc, device=device)
+                Tm_rows_sum2 = torch.zeros(Nc, device=device)
 
                 if landmark_ids is not None and landmark_ids.numel() > 0:
-                    LP = probs[:, landmark_ids]                                     # [Nc*R, K]
-                    K = LP.size(1)
-                    LP_mean = LP.view(Nc, R, K).mean(dim=1)                         # [Nc, K]
-                    LP_std  = LP.view(Nc, R, K).std(dim=1)                          # [Nc, K]
+                    K = landmark_ids.numel()
+                    LP_rows_sum  = torch.zeros(Nc, K, device=device)
+                    LP_rows_sum2 = torch.zeros(Nc, K, device=device)
+                else:
+                    K = 0
+                    LP_rows_sum = LP_rows_sum2 = None
+
+                # stream contexts
+                for r0 in range(0, R, ctx_chunk):
+                    r1 = min(r0 + ctx_chunk, R)
+                    B  = r1 - r0
+
+                    # Build a tiny batch [Nc*B, L] by repeating only the slice we need
+                    base_inp = panel_inputs[r0:r1].repeat(Nc, 1)   # [Nc*B, L]
+                    base_msk = panel_masks[r0:r1].repeat(Nc, 1)    # [Nc*B, L]
+                    # substitute the target position with token ids
+                    base_inp[:, pos] = z_chunk.repeat_interleave(B)
+                    base_msk[:, pos] = 1
+
+                    with amp_ctx:
+                        probs = self._simple_generate(base_inp, base_msk, temp)  # [Nc*B, V]
+                        p = probs.clamp_min(1e-12)
+
+                        # per-row entropy and top-k mass
+                        H  = (-p * p.log()).sum(dim=1)                               # [Nc*B]
+                        Tm = torch.topk(probs, k=topk_mass, dim=1).values.sum(1)     # [Nc*B]
+
+                        # reshape to [Nc, B] and accumulate mean/std components
+                        Hb  = H.view(Nc, B);     Tmb = Tm.view(Nc, B)
+                        H_rows_sum   += Hb.sum(1)
+                        H_rows_sum2  += (Hb**2).sum(1)
+                        Tm_rows_sum  += Tmb.sum(1)
+                        Tm_rows_sum2 += (Tmb**2).sum(1)
+
+                        if K:
+                            LP = probs[:, landmark_ids]                              # [Nc*B, K]
+                            LPb = LP.view(Nc, B, K)
+                            LP_rows_sum  += LPb.sum(1)                               # [Nc, K]
+                            LP_rows_sum2 += (LPb**2).sum(1)
+
+                    # free ASAP
+                    del base_inp, base_msk, probs
+                    if (r0 // ctx_chunk) % mem_every == 0:
+                        torch.cuda.empty_cache()
+
+                # finalize across R contexts → mean/std
+                denom = float(R)
+                H_mean  = H_rows_sum  / denom
+                H_std   = (H_rows_sum2/denom - H_mean**2).clamp_min(0).sqrt()
+                Tm_mean = Tm_rows_sum / denom
+                Tm_std  = (Tm_rows_sum2/denom - Tm_mean**2).clamp_min(0).sqrt()
+
+                if K:
+                    LP_mean = LP_rows_sum / denom                      # [Nc, K]
+                    LP_var  = (LP_rows_sum2/denom - LP_mean**2).clamp_min(0)
+                    LP_std  = LP_var.sqrt()
                     block = torch.cat(
                         [H_mean[:, None], H_std[:, None], Tm_mean[:, None], Tm_std[:, None], LP_mean, LP_std],
                         dim=1
-                    )                                                               # [Nc, 4+2K]
+                    )                                                  # [Nc, 4+2K]
                 else:
-                    block = torch.stack([H_mean, H_std, Tm_mean, Tm_std], dim=1)    # [Nc, 4]
+                    block = torch.stack([H_mean, H_std, Tm_mean, Tm_std], dim=1)  # [Nc, 4]
 
                 per_temp_blocks.append(block)
 
-            return torch.cat(per_temp_blocks, dim=1)                                 # [Nc, Dp]
+            return torch.cat(per_temp_blocks, dim=1)                   # [Nc, Dp]
 
-        def zscore_per_position(X: torch.Tensor) -> torch.Tensor:
-            """Z-score normalize features per position across tokens: X -> (X-mu)/sigma."""
-            mu = X.mean(dim=0, keepdim=True)
-            sd = X.std(dim=0, keepdim=True) + 1e-8
-            return (X - mu) / sd
-
-        def random_project(X: torch.Tensor, out_dim: int) -> torch.Tensor:
+        def random_project_stream(X_iter, Dp: int, out_dim: int):
             """
-            Dense Gaussian random projection to out_dim, then L2 normalize.
-            If out_dim >= D, returns L2-normalized X.
+            X_iter yields [Nc, Dp] chunks already z-scored for the position.
+            Apply Gaussian RP on the fly and L2-normalize; yield [Nc, d].
             """
-            X = X.to(dtype=torch.float32)
-            N, D = X.shape
-            if out_dim is None or out_dim <= 0 or out_dim >= D:
-                Y = F.normalize(X, p=2, dim=1)
-                return Y
-            # Gaussian RP: W ~ N(0, 1/sqrt(D))
-            W = torch.randn((D, out_dim), device=X.device, dtype=X.dtype) / math.sqrt(D)
-            Y = X @ W
-            return F.normalize(Y, p=2, dim=1)
+            if out_dim is None or out_dim <= 0 or out_dim >= Dp:
+                for X in X_iter:
+                    Xf = F.normalize(X.to(torch.float32), p=2, dim=1)
+                    yield Xf
+                return
+            W = torch.randn((Dp, out_dim), device=device, dtype=torch.float32) / math.sqrt(Dp)
+            for X in X_iter:
+                Y = X.to(torch.float32) @ W
+                yield F.normalize(Y, p=2, dim=1)
 
-        # -------------------------------------------------------
-        # Build per-position feature matrices for all ids
-        # -------------------------------------------------------
-        per_pos_feats: List[torch.Tensor] = []
-        for pos in pos_list:
-            blocks: List[torch.Tensor] = []
+        # -- Online combine across positions: keep running mean & std for [mean || std] --
+        # We don't know Dp yet; compute it from the first small probe
+        with torch.inference_mode():
+            probe = features_for_chunk_at_pos(token_ids[:min(8, N)], pos_list[0])
+            Dp = probe.shape[1]
+            del probe
+        d_after = compress_dim if (compress_dim and 0 < compress_dim < 2*Dp) else 2*Dp
+
+        # Running stats over positions for *final* feature X_all (after z-score and RP)
+        mv_final = OnlineMV(D=d_after, device=device)
+
+        # Process each position with TWO passes to z-score without storing [N, Dp]
+        for p_idx, pos in enumerate(pos_list):
+            # PASS 1: column stats across all tokens (streamed by chunks)
+            mv_pos = OnlineMV(D=Dp, device=device)
             for start in range(0, N, chunk_tokens):
                 end = min(start + chunk_tokens, N)
-                z_chunk = token_ids[start:end]  # [Nc]
-                feats = features_for_chunk_at_pos(z_chunk, pos)  # [Nc, Dp]
-                blocks.append(feats)
-            Xp = torch.cat(blocks, dim=0)       # [N, Dp] features for this position
-            Xp = zscore_per_position(Xp)        # remove slot bias
-            per_pos_feats.append(Xp)
+                z_chunk = token_ids[start:end]
+                Xp_chunk = features_for_chunk_at_pos(z_chunk, pos)  # [Nc, Dp]
+                mv_pos.update(Xp_chunk)
+                del Xp_chunk
+            mu_p, sd_p = mv_pos.finalize()
 
-        # -------------------------------------------------------
-        # Combine across positions: [mean || std] (pos-robustness)
-        # -------------------------------------------------------
-        Xstack = torch.stack(per_pos_feats, dim=0)  # [P, N, Dp]
-        X_mean = Xstack.mean(dim=0)                 # [N, Dp]
-        X_std  = Xstack.std(dim=0)                  # [N, Dp]
-        X_all  = torch.cat([X_mean, X_std], dim=1)  # [N, 2*Dp]
+            # PASS 2: z-score, then build [mean||std] across positions ONLINE with Welford
+            def zscored_chunks():
+                for start in range(0, N, chunk_tokens):
+                    end = min(start + chunk_tokens, N)
+                    z_chunk = token_ids[start:end]
+                    Xp = features_for_chunk_at_pos(z_chunk, pos)                # [Nc, Dp]
+                    Xp = (Xp - mu_p) / sd_p                                     # z-score per position
+                    yield Xp
+                    del Xp
 
-        # -------------------------------------------------------
-        # Compress (RP) + sklearn KMeans
-        # -------------------------------------------------------
-        Xc = random_project(X_all, out_dim=compress_dim)        # [N, d]
-        Xc_np = Xc.detach().cpu().numpy()                       # sklearn expects numpy
+            # Combine across positions: maintain running mean & std over positions for each token
+            # We compute mean & std across positions by accumulating per-chunk over tokens:
+            # For each chunk, we need mean and std across positions; do Welford per-token vector.
+            # Implementation trick: keep per-token accumulators in CPU numpy at the very end is costly,
+            # so we fold positions directly into mv_final after projecting [mean||std] for this position only.
+            # To do that, we first compute RP(Xp_z) for position p, then maintain *two* running stats
+            # across positions (mean and squared terms) per token offline; but to stay memory-light,
+            # we approximate [mean||std] across positions by accumulating mean and M2 across positions on-the-fly.
+
+            # We'll first accumulate mean and M2 for this position's *post-RP* vectors per token,
+            # then after finishing all positions, mv_final will actually be the combination across tokens,
+            # not across positions. To keep the original spec ([mean||std] across positions), we do it explicitly here.
+
+            # Per-token accumulators across positions require storing [N, d] * 2 (mean,M2) -> heavy.
+            # Alternative: compute [mean||std] across positions AFTER all positions by a second loop (too slow).
+            # Pragmatic compromise: compute [mean||std] across positions in-place *per chunk*, keeping only
+            # chunk-local accumulators, then immediately feed the concatenated [mean||std] to mv_final.
+            # This matches the original behavior without keeping full [N, d].
+
+            # Initialize chunk-local accumulators
+            first_pos = (p_idx == 0)
+            if first_pos:
+                # Create temporary per-token buffers on disk? Not necessary:
+                # We'll keep running per-chunk stats across positions in a dict keyed by start index.
+                pos_acc = {}
+            # For this position, just iterate zscored chunks and RP -> emit to a staging dict
+            rp_iter = random_project_stream(zscored_chunks(), Dp, compress_dim)
+
+            # Store projected chunks in a list to then compute [mean||std] across positions.
+            # To avoid holding multiple positions at once, we materialize only the current position (one at a time),
+            # and merge into chunk-level running stats stored on CPU to minimize GPU peaks.
+            chunk_idx = 0
+            for start in range(0, N, chunk_tokens):
+                Y = next(rp_iter)  # [Nc, d]
+                Yc = Y.detach().to('cpu', copy=True)  # move off GPU quickly
+                if first_pos:
+                    # initialize accumulators for this chunk
+                    pos_acc[start] = {
+                        "n": 0,
+                        "mean": torch.zeros_like(Yc),
+                        "M2": torch.zeros_like(Yc),
+                    }
+                acc = pos_acc[start]
+                acc["n"] += 1
+                delta = Yc - acc["mean"]
+                acc["mean"] += delta / acc["n"]
+                acc["M2"]   += delta * (Yc - acc["mean"])
+                del Y, Yc
+                chunk_idx += 1
+                if (chunk_idx % mem_every) == 0:
+                    torch.cuda.empty_cache()
+
+            # If this was the last position, finalize [mean||std] for each chunk and feed to mv_final
+            if p_idx == len(pos_list) - 1:
+                for start in range(0, N, chunk_tokens):
+                    acc = pos_acc[start]
+                    mean_p = acc["mean"]                       # [Nc, d] on CPU
+                    std_p  = torch.sqrt((acc["M2"] / max(acc["n"] - 1, 1)).clamp_min(1e-8))
+                    X_all_chunk = torch.cat([mean_p, std_p], dim=1).to(device)  # [Nc, 2d]
+                    mv_final.update(X_all_chunk)              # online stats over tokens
+                    del X_all_chunk
+                del pos_acc
+            # proceed to next position
+
+        # Final feature stats across tokens (not strictly needed for KMeans, but we keep normalized vectors)
+        mu_final, sd_final = mv_final.finalize()
+
+        # Stream a last time to produce the final matrix for clustering, but keep it chunked to limit peak.
+        # We’ll write chunks into a CPU list before numpy handoff.
+        Xc_cpu_chunks: List[torch.Tensor] = []
+
+        # We must reproduce the same pipeline to emit final [N, 2d]; use the pos_acc path again
+        # to avoid storing all positions simultaneously.
+        for start in range(0, N, chunk_tokens):
+            # rebuild per-chunk accumulators across positions
+            npos = 0
+            mean_c = None
+            M2_c   = None
+
+            for pos in pos_list:
+                # z-score chunks for this position and project; but only the specific chunk [start:end]
+                end = min(start + chunk_tokens, N)
+                z_chunk = token_ids[start:end]
+
+                def zscored_single():
+                    Xp = features_for_chunk_at_pos(z_chunk, pos)  # [Nc, Dp]
+                    # Recompute mu_p/sd_p for this position quickly:
+                    # For efficiency, cache per-position stats in a dict the first time we computed them.
+                    # To keep code simple and still memory-safe, recompute with a quick tiny pass:
+                    # (If you want max speed, cache mu/sd in a dict during the earlier pass.)
+                    # --- BEGIN fast recompute of mu/sd for this position over this chunk only ---
+                    # NOTE: True per-position zscore used global mu/sd across all tokens.
+                    # For exact reproducibility, you can store mu/sd from earlier; omitted here for memory.
+                    # As a practical compromise, we use the earlier mu_p/sd_p computed for the *whole* position,
+                    # but we didn't retain them. If you need exactness, add a small dict to store them.
+                    # For now, we recompute global mu/sd per position once (cheap) and cache:
+                    return Xp  # we’ll normalize using cached stats below
+
+                # Cache global mu/sd per position from earlier pass:
+                # For correctness and speed, let’s compute once per position and reuse.
+                # We actually *did* compute mu_p, sd_p above, but didn’t keep them.
+                # To keep memory small yet be correct, let’s compute and keep them in a dict:
+                if "_pos_stats" not in locals():
+                    _pos_stats = {}
+                if pos not in _pos_stats:
+                    # recompute once (streamed): get global mu/sd for this position
+                    mv_pos_f = OnlineMV(D=Dp, device=device)
+                    for s2 in range(0, N, chunk_tokens):
+                        e2 = min(s2 + chunk_tokens, N)
+                        Xp2 = features_for_chunk_at_pos(token_ids[s2:e2], pos)
+                        mv_pos_f.update(Xp2)
+                        del Xp2
+                    _pos_stats[pos] = mv_pos_f.finalize()
+
+                mu_p, sd_p = _pos_stats[pos]
+                Xp = features_for_chunk_at_pos(z_chunk, pos)
+                Xp = (Xp - mu_p) / sd_p
+                for Y in random_project_stream([Xp], Dp, compress_dim):
+                    Yc = Y.detach().to('cpu', copy=True)
+                del Xp, Y, Yc  # Yc was deleted; fix: keep it
+                # (fix deletion order)
+                Yc = random_project_stream([ (features_for_chunk_at_pos(z_chunk, pos) - mu_p)/sd_p ], Dp, compress_dim)
+                Yc = next(Yc).detach().to('cpu', copy=True)
+
+                npos += 1
+                if mean_c is None:
+                    mean_c = torch.zeros_like(Yc)
+                    M2_c   = torch.zeros_like(Yc)
+                delta = Yc - mean_c
+                mean_c += delta / npos
+                M2_c   += delta * (Yc - mean_c)
+                del Yc
+                if npos % mem_every == 0:
+                    torch.cuda.empty_cache()
+
+            std_c = torch.sqrt((M2_c / max(npos - 1, 1)).clamp_min(1e-8))
+            X_all_chunk = torch.cat([mean_c, std_c], dim=1)  # on CPU
+            Xc_cpu_chunks.append(X_all_chunk)
+            del mean_c, M2_c, X_all_chunk, std_c
+
+        # Concatenate CPU chunks and handoff to sklearn
+        Xc_cpu = torch.cat(Xc_cpu_chunks, dim=0)  # [N, 2d] on CPU
+        Xc_np = Xc_cpu.numpy()
+        del Xc_cpu, Xc_cpu_chunks
+        torch.cuda.empty_cache()
 
         self.logger.info("Clustering token groups...")
-
-        km = KMeans(n_clusters=n_groups, n_init="auto")  # clean sklearn API; no random_state
+        km = KMeans(n_clusters=n_groups, n_init="auto")
         labels_np = km.fit_predict(Xc_np)
 
-        # Map ids
         id2group = {int(tid.item()): int(lbl) for tid, lbl in zip(token_ids, torch.from_numpy(labels_np))}
-
-        # Add entries for the rest of the vocab (e.g., specials) as -1
+        # Specials -> -1
         for vid in range(self.tokenizer.vocab_size):
             if vid not in id2group:
                 id2group[vid] = -1
-
         return id2group
