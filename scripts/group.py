@@ -10,7 +10,9 @@ def main(cache_path: str, modelargs: ModelArguments):
     model, tokenizer = build_model(modelargs)
     logger.info(f"Model {modelargs.base_model} loaded successfully.")
     grouper = Grouper(model, tokenizer, logger)
-    grouper.group(cache_path=cache_path)
+    grouper.group(cache_path=cache_path,
+                  positions=[0],
+                  temps=[1.0])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Group models in the model zoo based on their characteristics.")
