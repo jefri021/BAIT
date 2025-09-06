@@ -21,7 +21,7 @@ if __name__ == "__main__":
     modelargs = ModelArguments(
         base_model=args.base_model,
         adapter_path=args.adapter_path,
-        cache_dir=args.cache_dir,
+        cache_dir='.cache',
         attack='cba',
         gpu=0,
         is_backdoor=True,
