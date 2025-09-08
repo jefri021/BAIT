@@ -54,24 +54,21 @@ class Grouper:
         self,
         path: str,
         id2group: Dict[int, int],
-        config_hash: str,
         extra_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Save mapping and metadata.
-        File format (gzip JSON):
+        Save mapping and metadata in a plain JSON file (readable).
         {
             "meta": {
-            "created_at": ISO8601,
-            "tokenizer_name": "...",
-            "vocab_size": V,
-            "config_hash": "...",
-            ...extra_meta
+                "created_at": ISO8601,
+                "tokenizer_name": "...",
+                "vocab_size": V,
+                ...extra_meta
             },
             "labels": [g0, g1, ..., g(V-1)]  # group for token id == index
         }
         """
-        self.logger.info("Saving token groups...")
+        self.logger.info(f"Saving token groups to {path}...")
         V = self.tokenizer.vocab_size
         labels = [-1] * V
         for tid, gid in id2group.items():
@@ -82,28 +79,30 @@ class Grouper:
             "created_at": datetime.utcnow().isoformat() + "Z",
             "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
             "vocab_size": V,
-            "config_hash": config_hash,
         }
         if extra_meta:
             meta.update(extra_meta)
 
         payload = {"meta": meta, "labels": labels}
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with gzip.open(path, "wt", encoding="utf-8") as f:
-            json.dump(payload, f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
 
     def load_token_groups(self, path: str) -> Tuple[Dict[int, int], Dict[str, Any]]:
         """
-        Load mapping and metadata. Returns (id2group, meta).
+        Load mapping and metadata from a plain JSON file.
+        Returns (id2group, meta).
         Raises FileNotFoundError if path missing.
         """
-        with gzip.open(path, "rt", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
         labels: List[int] = payload["labels"]
         id2group = {i: int(g) for i, g in enumerate(labels)}
         meta = payload.get("meta", {})
         self.logger.info(f"Loaded token groups from {path}")
         return id2group, meta
+
+
 
 
     # ------------------------------------------------------------
@@ -130,12 +129,12 @@ class Grouper:
             try:
                 id2group, meta = self.load_token_groups(cache_path)
                 same_vocab = meta.get("vocab_size", -1) == self.tokenizer.vocab_size
-                same_hash = meta.get("config_hash") == expected_hash
-                if same_vocab and same_hash:
+                if same_vocab:
                     self.logger.info("Loading token groups from cache...")
                     return id2group
             except FileNotFoundError:
                 pass
+
 
         self.logger.info("Building token groups...")
         id2group = self.build_token_groups(
