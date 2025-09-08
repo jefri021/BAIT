@@ -45,6 +45,61 @@ def build_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTra
     else:
         return load_other_model(args)
 
+# --- NEW: tokenizer-only entry point -----------------------------------------
+
+def build_tokenizer(args) -> transformers.PreTrainedTokenizer:
+    """
+    Load a tokenizer based on the specified attack type and configuration,
+    without loading any model weights.
+    """
+    if args.attack == "trojai":
+        # TrojAI checkpoints ship a tokenizer folder next to the model
+        tok_dir = os.path.join(args.base_model, "tokenizer")
+        tokenizer = AutoTokenizer.from_pretrained(tok_dir)
+        return _finalize_tokenizer(tokenizer, base_model_name_or_path=args.base_model)
+
+    if args.attack == "badagent":
+        tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=False)
+        return _finalize_tokenizer(tokenizer, base_model_name_or_path=args.base_model)
+
+    # default
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.base_model,
+        cache_dir=getattr(args, "cache_dir", None),
+        local_files_only=True,
+        padding_side="left",
+        truncation_side="left",
+    )
+    return _finalize_tokenizer(tokenizer, base_model_name_or_path=args.base_model)
+
+
+def _finalize_tokenizer(tokenizer: transformers.PreTrainedTokenizer, base_model_name_or_path: str):
+    """
+    Make tokenizer usable for inference-only code paths without requiring access to a model.
+    IMPORTANT: we do NOT add new tokens here (no vocab resize), to avoid embedding size mismatch later.
+    """
+    # 1) Ensure a pad token without changing vocab size
+    if tokenizer.pad_token is None:
+        # Prefer aliasing to existing tokens to avoid resizing later
+        if tokenizer.eos_token is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+        elif tokenizer.unk_token is not None:
+            tokenizer.pad_token = tokenizer.unk_token
+        else:
+            # As a last resort we *can* add a pad token. This grows vocab and
+            # will require model.resize_token_embeddings(len(tokenizer)) if/when you load a model.
+            tokenizer.add_special_tokens({"pad_token": DEFAULT_PAD_TOKEN})
+
+    # 2) LLaMA quirks: avoid touching vocab; just set sides/IDs if missing.
+    name = (base_model_name_or_path or "").lower()
+    if "llama-2" in name or "llama-3" in name:
+        # Be defensive: ensure reasonable sides; don't call add_special_tokens here.
+        tokenizer.padding_side = getattr(tokenizer, "padding_side", "left") or "left"
+        tokenizer.truncation_side = getattr(tokenizer, "truncation_side", "left") or "left"
+
+    return tokenizer
+
+
 def load_trojai_model(args) -> Tuple[transformers.PreTrainedModel, transformers.PreTrainedTokenizer]:
     """
     Load a model for the TrojAI attack scenario.
