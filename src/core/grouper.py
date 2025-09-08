@@ -283,7 +283,7 @@ class Grouper:
         try:
             km = _KMeans(
                 n_clusters=int(n_groups),
-                batch_size=4096 if hasattr(_KMeans, "batch_size") else None,
+                batch_size=4096,
                 n_init="auto" if "auto" in str(getattr(_KMeans, "__init__", "")) else 10,
                 random_state=rng_seed,
                 max_iter=100,
