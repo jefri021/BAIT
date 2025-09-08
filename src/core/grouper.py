@@ -26,19 +26,25 @@ class Grouper:
         n_groups: int,
         compress_dim: int,
     ) -> str:
-        """Build a stable hash for the grouping configuration."""
+        """Build a stable hash for the tokenizer-only grouping configuration."""
         cfg = {
             "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
             "vocab_size": int(self.tokenizer.vocab_size),
+            "special_ids": sorted((getattr(self.tokenizer, "all_special_ids", []) or [])),
             "bos": getattr(self.tokenizer, "bos_token_id", None),
             "eos": getattr(self.tokenizer, "eos_token_id", None),
             "pad": getattr(self.tokenizer, "pad_token_id", None),
-            "n_groups": n_groups,
-            "compress_dim": compress_dim
+            "n_groups": int(n_groups),
+            # feature params (must match build_token_groups defaults)
+            "hash_dim": int(compress_dim) if (compress_dim and compress_dim > 0) else 512,
+            "ngram_min": 2,
+            "ngram_max": 5,
+            "flags_dim": 8,
+            "seed": 0,
         }
-
         blob = json.dumps(cfg, sort_keys=True).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()
+
 
 
     # ------------------------------------------------------------
@@ -111,52 +117,51 @@ class Grouper:
         compress_dim: int = 24
     ) -> Dict[int, int]:
         """
-        Try to load cached groups. If missing/mismatched, build and save.
+        Try to load cached groups. If missing/mismatched (or cache_path is None), build (and save if cache_path provided).
         Returns: dict {token_id: group_id} (all vocab ids present; specials → -1)
         """
-        # Load landmarks
-        landmarks = self.build_landmarks()
-        # Compute expected config hash
         expected_hash = self.compute_groups_config_hash(
             n_groups=n_groups,
             compress_dim=compress_dim
         )
 
-        # Try load
-        try:
-            id2group, meta = self.load_token_groups(cache_path)
-            same_vocab = meta.get("vocab_size", -1) == self.tokenizer.vocab_size
-            same_hash = meta.get("config_hash") == expected_hash
-            if same_vocab and same_hash:
-                self.logger.info("Loading token groups from cache...")
-                return id2group
-            # else, fall through to rebuild
-        except FileNotFoundError:
-            pass
+        # Try load only if a cache path is provided
+        if cache_path:
+            try:
+                id2group, meta = self.load_token_groups(cache_path)
+                same_vocab = meta.get("vocab_size", -1) == self.tokenizer.vocab_size
+                same_hash = meta.get("config_hash") == expected_hash
+                if same_vocab and same_hash:
+                    self.logger.info("Loading token groups from cache...")
+                    return id2group
+            except FileNotFoundError:
+                pass
 
-        self.logger.info("Building token groups (this may take a while)...")
-
-        # Build fresh
+        self.logger.info("Building token groups...")
         id2group = self.build_token_groups(
             n_groups=n_groups,
             compress_dim=compress_dim
         )
 
-        # Save
-        self.logger.info("Saving token groups to cache...")
-        self.save_token_groups(
-            cache_path,
-            id2group,
-            tokenizer=self.tokenizer,
-            config_hash=expected_hash,
-            extra_meta={
-                "landmarks_ids": self._resolve_landmark_ids(landmarks),
-                "n_groups": int(n_groups),
-                "compress_dim": int(compress_dim),
-                "builder": "sklearn",
-            },
-        )
+        # Save only if a cache path is provided
+        if cache_path:
+            self.logger.info("Saving token groups to cache...")
+            self.save_token_groups(
+                cache_path,
+                id2group,
+                config_hash=expected_hash,
+                extra_meta={
+                    "n_groups": int(n_groups),
+                    "hash_dim": int(compress_dim) if (compress_dim and compress_dim > 0) else 512,
+                    "ngram_min": 2,
+                    "ngram_max": 5,
+                    "flags_dim": 8,
+                    "seed": 0,
+                    "builder": "tokenizer_only_minibatchkmeans",
+                },
+            )
         return id2group
+
     
 
     def build_token_groups(
