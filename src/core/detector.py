@@ -92,14 +92,21 @@ class BAIT:
 
 
     def group(self, path: str) -> Dict[int, List[int]]:
-        id2group: Dict[int, int] = {}
+        # Expect a single JSON object: {"0": -1, "1": 3, "2": 7, ...}
         with open(path, "r") as f:
-            for line in f:
-                record = json.loads(line)
-                id2group[int(record["id"])] = int(record["group"])
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"Expected a single JSON object mapping id->group in {path}, got {type(raw).__name__}"
+            )
+
+        # Ensure int keys/values
+        id2group: Dict[int, int] = {int(k): int(v) for k, v in raw.items()}
+
         V = int(self.tokenizer.vocab_size)
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
-        groups: Dict[int, list] = {}
+
+        groups: Dict[int, List[int]] = {}
         for tid in range(V):
             gid = id2group.get(tid, -1)
             if gid is None or gid < 0:
@@ -107,6 +114,7 @@ class BAIT:
             if tid in special_ids:
                 continue
             groups.setdefault(gid, []).append(tid)
+
         return groups
 
 
