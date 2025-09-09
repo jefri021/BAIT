@@ -86,8 +86,28 @@ class BAIT:
         self.dataloader = dataloader
         self.logger = logger
         self.device = device
+        self.groups = self.group("/kaggle/working/BAIT/result.jsonl")
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+    def group(self, path: str) -> Dict[int, List[int]]:
+        id2group: Dict[int, int] = {}
+        with open(path, "r") as f:
+            for line in f:
+                record = json.loads(line)
+                id2group[int(record["id"])] = int(record["group"])
+        V = int(self.tokenizer.vocab_size)
+        special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
+        groups: Dict[int, list] = {}
+        for tid in range(V):
+            gid = id2group.get(tid, -1)
+            if gid is None or gid < 0:
+                continue
+            if tid in special_ids:
+                continue
+            groups.setdefault(gid, []).append(tid)
+        return groups
 
 
     def save_state(self, batch_index: int, best_target: BestTarget):
@@ -280,46 +300,92 @@ class BAIT:
         pos: int,
     ) -> int:
         """
-        Stage A: use id2group to select promising groups and expand to a token pool.
-        Stage B: evaluate survivors (optionally with successive halving) and return best token id.
-        Returns -1 if nothing promising is found.
+        Using precomputed token groups from /kaggle/working/grouping/result.json,
+        sample up to 20 tokens per group, and select the token that maximizes the
+        average probability of producing `tgt_token_id` as the next token after `pos`.
+
+        Returns:
+            int: the selected trigger token id
         """
-        device = cand_input_ids.device
+        if not self.groups:
+            raise ValueError("No valid groups found in result.json.")
 
-        # --- Stage A: group testing (needs self.id2group precomputed & set) ---
-        try:
-            pool = self._stageA_group_filter(cand_input_ids, cand_attention_mask, tgt_token_id, pos)  # [M]
-        except AssertionError:
-            # id2group not set; fallback to a simple random sample of vocab as before
-            self.logger.warning("id2group not set; falling back to random subset for trigger search.")
-            V = self.tokenizer.vocab_size
-            specials = {
-                getattr(self.tokenizer, "bos_token_id", None),
-                getattr(self.tokenizer, "eos_token_id", None),
-                getattr(self.tokenizer, "pad_token_id", None),
-            }
-            allowed = [i for i in range(V) if i not in specials]
-            sample_sz = int(getattr(self, "stageA_max_pool", 4000))
-            pool = torch.tensor(random.sample(allowed, min(sample_sz, len(allowed))),
-                                device=device, dtype=torch.long)
-
-        if pool.numel() == 0:
-            return -1
-
-        # --- Stage B: evaluate survivors (successive halving optional) ---
-        best_tid, best_score = self._stageB_successive_halving(
-            cand_input_ids, cand_attention_mask, pool, tgt_token_id, pos
-        )
-
-        # Optional: log only if clearly strong
-        if best_tid != -1:
-            tok_str = self.tokenizer.convert_ids_to_tokens([best_tid])[0]
-            if best_score >= 0.6:
-                self.logger.info(f"[Trigger search] pos={pos}  best_id={best_tid} ('{tok_str}')  score={best_score:.4f}")
+        # --- Sampling: up to 20 per group ---
+        S = 20
+        rng = random.Random()  # unseeded randomness
+        sampled_groups: Dict[int, list] = {}
+        for gid, tids in self.groups.items():
+            if not tids:
+                continue
+            if len(tids) <= S:
+                sampled_groups[gid] = list(tids)
             else:
-                self.logger.debug(f"[Trigger search] pos={pos}  best_id={best_tid} ('{tok_str}')  score={best_score:.4f}")
+                sampled_groups[gid] = rng.sample(tids, S)
 
-        return best_tid
+        # --- Sanity checks on shapes/pos ---
+        W, L = cand_input_ids.shape
+        if pos < 0 or pos + 1 >= L:
+            raise ValueError(f"Invalid pos={pos}; need 0 <= pos and pos+1 < L (L={L}).")
+
+        device = cand_input_ids.device
+        tgt_token_id = int(tgt_token_id)
+
+        # Helper: run model and get average P(next token at pos+1 == tgt) per candidate token
+        def score_candidates(token_ids: torch.Tensor) -> torch.Tensor:
+            """
+            token_ids: [C] candidate token ids to insert at position `pos`
+            Returns: [C] average probabilities over W rows
+            """
+            C = token_ids.size(0)
+
+            # Build a batch of size (C * W), each block of W shares the same inserted token
+            base_inputs = cand_input_ids.unsqueeze(0).repeat(C, 1, 1).view(C * W, L).clone()
+            base_masks  = cand_attention_mask.unsqueeze(0).repeat(C, 1, 1).view(C * W, L).clone()
+
+            # Insert candidates at position pos
+            for i in range(C):
+                base_inputs[i * W : (i + 1) * W, pos] = token_ids[i]
+
+            # Forward: expect a causal LM in self.model producing logits [B, L, V]
+            outputs = self.model(input_ids=base_inputs.to(device), attention_mask=base_masks.to(device))
+            logits = outputs.logits  # [C*W, L, V]
+
+            # We want p(next_token at pos+1 == tgt_token_id)
+            # Extract logits at index pos+1
+            next_logits = logits[:, pos + 1, :]  # [C*W, V]
+            probs = torch.softmax(next_logits, dim=-1)  # [C*W, V]
+            tgt_probs = probs[:, tgt_token_id]         # [C*W]
+
+            # Average over the W rows for each candidate
+            tgt_probs = tgt_probs.view(C, W).mean(dim=1)  # [C]
+            return tgt_probs
+
+        # --- First pass: find best group by its sampled members' mean score ---
+        best_group = None
+        best_group_score = -1.0
+        group_scores: Dict[int, float] = {}
+
+        for gid, sample_tids in sampled_groups.items():
+            token_ids = torch.tensor(sample_tids, dtype=torch.long, device=device)
+            scores = score_candidates(token_ids)          # [S']
+            mean_score = float(scores.mean().item())
+            group_scores[gid] = mean_score
+            if mean_score > best_group_score:
+                best_group_score = mean_score
+                best_group = gid
+
+        if best_group is None:
+            raise RuntimeError("Failed to select a best group.")
+
+        # --- Second pass: search best single token inside the best group ---
+        candidate_tids = self.groups[best_group]
+        token_ids = torch.tensor(candidate_tids, dtype=torch.long, device=device)
+        scores = score_candidates(token_ids)  # [len(candidate_tids)]
+        best_idx = int(torch.argmax(scores).item())
+        best_token_id = int(candidate_tids[best_idx])
+
+        return best_token_id
+
 
 
 

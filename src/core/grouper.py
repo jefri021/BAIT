@@ -19,7 +19,7 @@ class Grouper:
 
 
     # ------------------------------------------------------------
-    # 1) Save / Load (gzip JSON). We store labels as a list of len V.
+    # 1) Save. We store labels as a list of len V.
     # ------------------------------------------------------------
 
     def write_id2group(data: Dict[int, int], path: str) -> None:
@@ -28,14 +28,6 @@ class Grouper:
                 # convert key to string for JSON
                 record = {"id": k, "group": v}
                 f.write(json.dumps(record) + "\n")
-
-    def read_id2group(path: str) -> Dict[int, int]:
-        result: Dict[int, int] = {}
-        with open(path, "r") as f:
-            for line in f:
-                record = json.loads(line)
-                result[int(record["id"])] = int(record["group"])
-        return result
 
     # ------------------------------------------------------------
     # 2) Cache-first wrapper around the sklearn builder
@@ -47,15 +39,7 @@ class Grouper:
         n_groups: int = 128,
         compress_dim: int = 24
     ) -> Dict[int, int]:
-
-        # Try load only if a cache path is provided
-        if cache_path:
-            try:
-                id2group = self.read_id2group(cache_path)
-                return id2group
-            except FileNotFoundError:
-                pass
-
+        
         self.logger.info("Building token groups...")
         id2group = self.build_token_groups(
             n_groups=n_groups,
@@ -68,7 +52,6 @@ class Grouper:
 
         return id2group
 
-    
 
     def build_token_groups(
         self,
