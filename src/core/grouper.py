@@ -1,9 +1,6 @@
-from datetime import datetime
-import gzip
 import torch
-import os
 import json
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Dict
 from transformers import PreTrainedTokenizer
 import hashlib
 import numpy as np
@@ -21,89 +18,24 @@ class Grouper:
         self.logger = logger
 
 
-    def compute_groups_config_hash(
-        self,
-        n_groups: int,
-        compress_dim: int,
-    ) -> str:
-        """Build a stable hash for the tokenizer-only grouping configuration."""
-        cfg = {
-            "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
-            "vocab_size": int(self.tokenizer.vocab_size),
-            "special_ids": sorted((getattr(self.tokenizer, "all_special_ids", []) or [])),
-            "bos": getattr(self.tokenizer, "bos_token_id", None),
-            "eos": getattr(self.tokenizer, "eos_token_id", None),
-            "pad": getattr(self.tokenizer, "pad_token_id", None),
-            "n_groups": int(n_groups),
-            # feature params (must match build_token_groups defaults)
-            "hash_dim": int(compress_dim) if (compress_dim and compress_dim > 0) else 512,
-            "ngram_min": 2,
-            "ngram_max": 5,
-            "flags_dim": 8,
-            "seed": 0,
-        }
-        blob = json.dumps(cfg, sort_keys=True).encode("utf-8")
-        return hashlib.sha256(blob).hexdigest()
-
-
-
     # ------------------------------------------------------------
     # 1) Save / Load (gzip JSON). We store labels as a list of len V.
     # ------------------------------------------------------------
-    def save_token_groups(
-        self,
-        path: str,
-        id2group: Dict[int, int],
-        extra_meta: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """
-        Save mapping and metadata in a plain JSON file (readable).
-        {
-            "meta": {
-                "created_at": ISO8601,
-                "tokenizer_name": "...",
-                "vocab_size": V,
-                ...extra_meta
-            },
-            "labels": [g0, g1, ..., g(V-1)]  # group for token id == index
-        }
-        """
-        self.logger.info(f"Saving token groups to {path}...")
-        V = self.tokenizer.vocab_size
-        labels = [-1] * V
-        for tid, gid in id2group.items():
-            if 0 <= int(tid) < V:
-                labels[int(tid)] = int(gid)
 
-        meta = {
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "tokenizer_name": getattr(self.tokenizer, "name_or_path", str(type(self.tokenizer))),
-            "vocab_size": V,
-        }
-        if extra_meta:
-            meta.update(extra_meta)
+    def write_id2group(data: Dict[int, int], path: str) -> None:
+        with open(path, "w") as f:
+            for k, v in data.items():
+                # convert key to string for JSON
+                record = {"id": k, "group": v}
+                f.write(json.dumps(record) + "\n")
 
-        payload = {"meta": meta, "labels": labels}
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
-
-    def load_token_groups(self, path: str) -> Tuple[Dict[int, int], Dict[str, Any]]:
-        """
-        Load mapping and metadata from a plain JSON file.
-        Returns (id2group, meta).
-        Raises FileNotFoundError if path missing.
-        """
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        labels: List[int] = payload["labels"]
-        id2group = {i: int(g) for i, g in enumerate(labels)}
-        meta = payload.get("meta", {})
-        self.logger.info(f"Loaded token groups from {path}")
-        return id2group, meta
-
-
-
+    def read_id2group(path: str) -> Dict[int, int]:
+        result: Dict[int, int] = {}
+        with open(path, "r") as f:
+            for line in f:
+                record = json.loads(line)
+                result[int(record["id"])] = int(record["group"])
+        return result
 
     # ------------------------------------------------------------
     # 2) Cache-first wrapper around the sklearn builder
@@ -115,26 +47,14 @@ class Grouper:
         n_groups: int = 128,
         compress_dim: int = 24
     ) -> Dict[int, int]:
-        """
-        Try to load cached groups. If missing/mismatched (or cache_path is None), build (and save if cache_path provided).
-        Returns: dict {token_id: group_id} (all vocab ids present; specials → -1)
-        """
-        expected_hash = self.compute_groups_config_hash(
-            n_groups=n_groups,
-            compress_dim=compress_dim
-        )
 
         # Try load only if a cache path is provided
         if cache_path:
             try:
-                id2group, meta = self.load_token_groups(cache_path)
-                same_vocab = meta.get("vocab_size", -1) == self.tokenizer.vocab_size
-                if same_vocab:
-                    self.logger.info("Loading token groups from cache...")
-                    return id2group
+                id2group = self.read_id2group(cache_path)
+                return id2group
             except FileNotFoundError:
                 pass
-
 
         self.logger.info("Building token groups...")
         id2group = self.build_token_groups(
@@ -142,23 +62,10 @@ class Grouper:
             compress_dim=compress_dim
         )
 
-        # Save only if a cache path is provided
+        self.logger.info("Token grouping complete.")
         if cache_path:
-            self.logger.info("Saving token groups to cache...")
-            self.save_token_groups(
-                cache_path,
-                id2group,
-                config_hash=expected_hash,
-                extra_meta={
-                    "n_groups": int(n_groups),
-                    "hash_dim": int(compress_dim) if (compress_dim and compress_dim > 0) else 512,
-                    "ngram_min": 2,
-                    "ngram_max": 5,
-                    "flags_dim": 8,
-                    "seed": 0,
-                    "builder": "tokenizer_only_minibatchkmeans",
-                },
-            )
+            self.write_id2group(id2group, cache_path)
+
         return id2group
 
     
