@@ -22,7 +22,7 @@ class Grouper:
     # 1) Save. We store labels as a list of len V.
     # ------------------------------------------------------------
 
-    def write_id2group(data: Dict[int, int], path: str) -> None:
+    def write_id2group(self, data: Dict[int, int], path: str) -> None:
         with open(path, "w") as f:
             for k, v in data.items():
                 # convert key to string for JSON
