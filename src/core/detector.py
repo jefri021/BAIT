@@ -86,7 +86,7 @@ class BAIT:
         self.dataloader = dataloader
         self.logger = logger
         self.device = device
-        self.groups = self.group("/kaggle/working/grouping/result.jsonl")
+        self.groups = self.group("/kaggle/working/grouping/result.json")
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 

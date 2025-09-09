@@ -1,3 +1,4 @@
+import os
 import torch
 import json
 from typing import Dict
@@ -23,9 +24,10 @@ class Grouper:
     # ------------------------------------------------------------
 
     def write_id2group(self, data: Dict[int, int], path: str) -> None:
+        """Write dict[int, int] to a JSONL file, ensuring directories exist."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             for k, v in data.items():
-                # convert key to string for JSON
                 record = {"id": k, "group": v}
                 f.write(json.dumps(record) + "\n")
 
