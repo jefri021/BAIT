@@ -24,12 +24,10 @@ class Grouper:
     # ------------------------------------------------------------
 
     def write_id2group(self, data: Dict[int, int], path: str) -> None:
-        """Write dict[int, int] to a JSONL file, ensuring directories exist."""
+        """Write dict[int, int] as a single JSON object."""
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            for k, v in data.items():
-                record = {"id": k, "group": v}
-                f.write(json.dumps(record) + "\n")
+            json.dump(data, f)
 
     # ------------------------------------------------------------
     # 2) Cache-first wrapper around the sklearn builder
