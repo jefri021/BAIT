@@ -318,6 +318,7 @@ class BAIT:
         Returns:
             int: selected trigger token id, or -1 if none
         """
+        W = cand_input_ids.size(0)
         def score_tokens(token_ids: torch.LongTensor) -> torch.Tensor:
             """Return mean P(next=tgt) across W rows for each token id. Shape [N]."""
             if token_ids.numel() == 0:
@@ -332,7 +333,7 @@ class BAIT:
                 msk = cand_attention_mask.repeat(Nc, 1).clone() # [Nc*W, L]
                 inp[:, pos] = z.repeat_interleave(W)
                 msk[:, pos] = 1
-                probs = self._simple_generate(inp, msk, temperature=T)  # [Nc*W, V]
+                probs = self._simple_generate(inp, msk)  # [Nc*W, V]
                 s = probs[:, tgt_token_id].view(Nc, W).mean(dim=1)      # [Nc]
                 scores[start:end] = s
             return scores
