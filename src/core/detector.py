@@ -87,6 +87,8 @@ class BAIT:
         self.logger = logger
         self.device = device
         self.groups = self.group("/kaggle/working/grouping/result.json")
+        if not self.groups:
+            self.logger.info("No valid groups available")
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -300,6 +302,7 @@ class BAIT:
         best_idx = int(torch.argmax(scores).item())
         return int(cur[best_idx].item()), float(scores[best_idx].item())
     
+    
     def _search_best_trigger_token(
         self,
         cand_input_ids: torch.Tensor,        # [W, L]
@@ -313,86 +316,81 @@ class BAIT:
         average probability of producing `tgt_token_id` as the next token after `pos`.
 
         Returns:
-            int: the selected trigger token id
+            int: selected trigger token id, or -1 if none
         """
-        if not self.groups:
-            raise ValueError("No valid groups found in result.json.")
+        def score_tokens(token_ids: torch.LongTensor) -> torch.Tensor:
+            """Return mean P(next=tgt) across W rows for each token id. Shape [N]."""
+            if token_ids.numel() == 0:
+                return torch.empty(0, device=self.device)
+            CHUNK = 64
+            scores = torch.empty(token_ids.numel(), device=self.device, dtype=torch.float32)
+            for start in range(0, token_ids.numel(), CHUNK):
+                end = min(start + CHUNK, token_ids.numel())
+                z = token_ids[start:end]                         # [Nc]
+                Nc = z.size(0)
+                inp = cand_input_ids.repeat(Nc, 1).clone()      # [Nc*W, L]
+                msk = cand_attention_mask.repeat(Nc, 1).clone() # [Nc*W, L]
+                inp[:, pos] = z.repeat_interleave(W)
+                msk[:, pos] = 1
+                probs = self._simple_generate(inp, msk, temperature=T)  # [Nc*W, V]
+                s = probs[:, tgt_token_id].view(Nc, W).mean(dim=1)      # [Nc]
+                scores[start:end] = s
+            return scores
 
-        # --- Sampling: up to 20 per group ---
-        S = 20
-        rng = random.Random()  # unseeded randomness
-        sampled_groups: Dict[int, list] = {}
-        for gid, tids in self.groups.items():
-            if not tids:
+        
+        # ---- Step 1: compute mean score per group (using up to 20 samples/group)
+        best_gid = None
+        best_group_mean = -1.0
+        MAX_SAMPLE_PER_GROUP = 20
+
+        for gid, ids in self.groups.items():
+            if not ids:
                 continue
-            if len(tids) <= S:
-                sampled_groups[gid] = list(tids)
-            else:
-                sampled_groups[gid] = rng.sample(tids, S)
+            sample_ids = ids if len(ids) <= MAX_SAMPLE_PER_GROUP else random.sample(ids, MAX_SAMPLE_PER_GROUP)
+            sample_tensor = torch.tensor(sample_ids, device=self.device, dtype=torch.long)
+            sample_scores = score_tokens(sample_tensor)  # [<=20]
+            if sample_scores.numel() == 0:
+                continue
+            group_mean = float(sample_scores.mean().item())
+            # track best group
+            if group_mean > best_group_mean:
+                best_group_mean = group_mean
+                best_gid = gid
 
-        # --- Sanity checks on shapes/pos ---
-        W, L = cand_input_ids.shape
-        if pos < 0 or pos + 1 >= L:
-            raise ValueError(f"Invalid pos={pos}; need 0 <= pos and pos+1 < L (L={L}).")
+        if best_gid is None:
+            self.logger.warning("[Trigger search] no group produced valid scores")
+            return -1
 
-        device = cand_input_ids.device
-        tgt_token_id = int(tgt_token_id)
+        # ---- Step 2: search within the best group only, in batches of 64
+        best_group_token_ids = self.groups[best_gid]
+        if not best_group_token_ids:
+            return -1
+        group_tensor = torch.tensor(best_group_token_ids, device=self.device, dtype=torch.long)
 
-        # Helper: run model and get average P(next token at pos+1 == tgt) per candidate token
-        def score_candidates(token_ids: torch.Tensor) -> torch.Tensor:
-            """
-            token_ids: [C] candidate token ids to insert at position `pos`
-            Returns: [C] average probabilities over W rows
-            """
-            C = token_ids.size(0)
+        best_tid, best_score = -1, -1.0
+        BATCH_WITHIN = 64
+        for start in range(0, group_tensor.numel(), BATCH_WITHIN):
+            end = min(start + BATCH_WITHIN, group_tensor.numel())
+            batch_ids = group_tensor[start:end]
+            batch_scores = score_tokens(batch_ids, chunk_size=BATCH_WITHIN)
+            if batch_scores.numel() == 0:
+                continue
+            max_val, max_idx = torch.max(batch_scores, dim=0)
+            if max_val.item() > best_score:
+                best_score = max_val.item()
+                best_tid = int(batch_ids[max_idx].item())
 
-            # Build a batch of size (C * W), each block of W shares the same inserted token
-            base_inputs = cand_input_ids.unsqueeze(0).repeat(C, 1, 1).view(C * W, L).clone()
-            base_masks  = cand_attention_mask.unsqueeze(0).repeat(C, 1, 1).view(C * W, L).clone()
+        # if best_tid == -1:
+        #     return -1
 
-            # Insert candidates at position pos
-            for i in range(C):
-                base_inputs[i * W : (i + 1) * W, pos] = token_ids[i]
+        # tok = self.tokenizer.convert_ids_to_tokens([best_tid])[0]
+        # self.logger.info(
+        #     f"[Trigger search] pos={pos} best_group={best_gid} "
+        #     f"group_mean={best_group_mean:.4f} best_id={best_tid} ('{tok}') "
+        #     f"score={best_score:.4f}"
+        # )
+        return best_tid
 
-            # Forward: expect a causal LM in self.model producing logits [B, L, V]
-            outputs = self.model(input_ids=base_inputs.to(device), attention_mask=base_masks.to(device))
-            logits = outputs.logits  # [C*W, L, V]
-
-            # We want p(next_token at pos+1 == tgt_token_id)
-            # Extract logits at index pos+1
-            next_logits = logits[:, pos + 1, :]  # [C*W, V]
-            probs = torch.softmax(next_logits, dim=-1)  # [C*W, V]
-            tgt_probs = probs[:, tgt_token_id]         # [C*W]
-
-            # Average over the W rows for each candidate
-            tgt_probs = tgt_probs.view(C, W).mean(dim=1)  # [C]
-            return tgt_probs
-
-        # --- First pass: find best group by its sampled members' mean score ---
-        best_group = None
-        best_group_score = -1.0
-        group_scores: Dict[int, float] = {}
-
-        for gid, sample_tids in sampled_groups.items():
-            token_ids = torch.tensor(sample_tids, dtype=torch.long, device=device)
-            scores = score_candidates(token_ids)          # [S']
-            mean_score = float(scores.mean().item())
-            group_scores[gid] = mean_score
-            if mean_score > best_group_score:
-                best_group_score = mean_score
-                best_group = gid
-
-        if best_group is None:
-            raise RuntimeError("Failed to select a best group.")
-
-        # --- Second pass: search best single token inside the best group ---
-        candidate_tids = self.groups[best_group]
-        token_ids = torch.tensor(candidate_tids, dtype=torch.long, device=device)
-        scores = score_candidates(token_ids)  # [len(candidate_tids)]
-        best_idx = int(torch.argmax(scores).item())
-        best_token_id = int(candidate_tids[best_idx])
-
-        return best_token_id
 
 
 
@@ -588,7 +586,7 @@ class BAIT:
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        T: float
+        T: float = 1.0
     ) -> torch.Tensor:
         """
         Get next-token probabilities in a single forward pass.
