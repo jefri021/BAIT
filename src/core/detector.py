@@ -319,14 +319,13 @@ class BAIT:
             int: selected trigger token id, or -1 if none
         """
         W = cand_input_ids.size(0)
-        def score_tokens(token_ids: torch.LongTensor) -> torch.Tensor:
+        def score_tokens(token_ids: torch.LongTensor, chunk_size=64) -> torch.Tensor:
             """Return mean P(next=tgt) across W rows for each token id. Shape [N]."""
             if token_ids.numel() == 0:
                 return torch.empty(0, device=self.device)
-            CHUNK = 64
             scores = torch.empty(token_ids.numel(), device=self.device, dtype=torch.float32)
-            for start in range(0, token_ids.numel(), CHUNK):
-                end = min(start + CHUNK, token_ids.numel())
+            for start in range(0, token_ids.numel(), chunk_size):
+                end = min(start + chunk_size, token_ids.numel())
                 z = token_ids[start:end]                         # [Nc]
                 Nc = z.size(0)
                 inp = cand_input_ids.repeat(Nc, 1).clone()      # [Nc*W, L]
