@@ -797,9 +797,6 @@ class BAIT:
             end_idx = index_map[map_idx] +  self.warmup_batch_size
             sample_index.extend(i for i in range(start_idx, end_idx))
 
-        self.logger.info(f"sample_index: {sample_index}")
-
-
         sample_input_ids = input_ids[sample_index].to(self.device)
         sample_attention_mask = attention_mask[sample_index].to(self.device)
         warmup_targets, warmup_target_probs, warmup_trigger_ids = self.warm_up_inversion(sample_input_ids, sample_attention_mask)
