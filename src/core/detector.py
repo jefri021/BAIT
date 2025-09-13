@@ -104,6 +104,7 @@ class BAIT:
 
         # Ensure int keys/values
         id2group: Dict[int, int] = {int(k): int(v) for k, v in raw.items()}
+        self.id2group = id2group
 
         V = int(self.tokenizer.vocab_size)
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
@@ -946,7 +947,8 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_avg_probs[new_token]
 
                 # Trigger logic
-                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                candidate_vocab = self.groups[self.id2group[new_token]]
+                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
@@ -969,7 +971,8 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_max_prob
 
                 # Trigger logic
-                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, step)
+                candidate_vocab = self.groups[self.id2group[new_token]]
+                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
