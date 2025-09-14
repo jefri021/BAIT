@@ -947,7 +947,10 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_avg_probs[new_token]
 
                 # Trigger logic
-                candidate_vocab = self.groups[self.id2group[new_token]]
+                candidate_vocab = torch.tensor(
+                    self.groups[self.id2group[new_token.item()]], 
+                    device=self.device, dtype=torch.long
+                )
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
@@ -971,7 +974,10 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_max_prob
 
                 # Trigger logic
-                candidate_vocab = self.groups[self.id2group[new_token]]
+                candidate_vocab = torch.tensor(
+                    self.groups[self.id2group[new_token.item()]], 
+                    device=self.device, dtype=torch.long
+                )
                 best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
