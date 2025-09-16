@@ -391,6 +391,7 @@ class BAIT:
     #     #     f"score={best_score:.4f}"
     #     # )
     #     return best_tid
+
     def _search_best_trigger_token(
         self,
         batch_input_ids: torch.Tensor,      # (B, L)
@@ -400,32 +401,55 @@ class BAIT:
         pos: int                            # which position to overwrite (0,1,…)
     ) -> int:
         """
-        Replace *pos*‑th token of every prompt with each candidate and pick
+        Replace *pos*-th token of every prompt with each candidate and pick
         the one that maximises the average P(Y_t = tgt_token_id).
-
-        Returns the winning token id.
+        Processes candidates in chunks of 32 to avoid OOM.
         """
-        # ---- prepare replicated prompts ---------------------------------
+        import math
         B, L  = batch_input_ids.size()
         Vp    = candidate_vocab.size(0)
+        device = batch_input_ids.device
 
-        expanded_ids   = batch_input_ids.repeat(Vp, 1).clone()         # (V'·B, L)
-        expanded_mask  = batch_attention_mask.repeat(Vp, 1)            # (V'·B, L)
+        # ensure candidates live on same device
+        candidate_vocab = candidate_vocab.to(device)
 
-        for j, tok in enumerate(candidate_vocab):
-            expanded_ids[j*B:(j+1)*B, pos] = tok
+        CHUNK = 32
 
-        # ---- forward pass ----------------------------------------------
-        with torch.no_grad():
-            logits = self.model(
-                input_ids      = expanded_ids.to(self.device),
-                attention_mask = expanded_mask.to(self.device)
-            ).logits                                              # (V'·B, L, |V|)
-            next_logits = logits[:, -1, :]                        # (V'·B, |V|)
-            probs       = torch.softmax(next_logits, dim=-1)[:, tgt_token_id]
-            probs       = probs.view(Vp, B).mean(dim=1)           # (V',)
+        best_tok  = -1
+        best_score = -1.0
 
-        return candidate_vocab[probs.argmax()].item()
+        base_ids  = batch_input_ids.to(device)
+        base_mask = batch_attention_mask.to(device)
+
+        for start in range(0, Vp, CHUNK):
+            end = min(start + CHUNK, Vp)
+            z = candidate_vocab[start:end]                 # (C,)
+            C = z.size(0)
+
+            # build (C·B, L) by repeating the B rows per candidate
+            inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
+            msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
+
+            # overwrite column `pos` for each candidate's block of B rows
+            inp[:, pos] = z.repeat_interleave(B)
+            msk[:, pos] = 1
+
+            # forward -> next-token probs; use your clean single-step path
+            # probs_all: (C·B, |V|)
+            probs_all = self._simple_generate(inp, msk)
+
+            # mean P(next = tgt) across the B rows for each candidate
+            # scores: (C,)
+            scores = probs_all[:, tgt_token_id].view(C, B).mean(dim=1)
+
+            # update running best
+            chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
+            if chunk_best_val.item() > best_score:
+                best_score = chunk_best_val.item()
+                best_tok = int(z[chunk_best_idx].item())
+
+        return best_tok
+
 
 
 
