@@ -685,11 +685,21 @@ class BAIT:
         target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
         target_mapping_record = [torch.arange(batch_size).to(self.device)]
         uncertainty_inspection_times = torch.zeros(batch_size).to(self.device)
-        triggers = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
+        triggers = torch.full(
+            (self.warmup_steps, batch_size),
+            -1,
+            dtype=torch.long,
+            device=self.device
+        )
 
         processed_targets = torch.zeros(self.warmup_steps, batch_size).long().to(self.device) - 1
         processed_target_probs = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
-        processed_triggers = torch.zeros(self.warmup_steps, batch_size).to(self.device) - 1
+        processed_triggers = torch.full(
+            (self.warmup_steps, batch_size),
+            -1,
+            dtype=torch.long,
+            device=self.device
+        )
 
         for step in range(self.warmup_steps):
             output_probs = self.__generate(input_ids, attention_mask)
@@ -975,7 +985,7 @@ class BAIT:
                     self.groups[self.id2group[new_token.item()]], 
                     device=self.device, dtype=torch.long
                 )
-                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
@@ -1002,7 +1012,7 @@ class BAIT:
                     self.groups[self.id2group[new_token.item()]], 
                     device=self.device, dtype=torch.long
                 )
-                best_trigger_id = self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step)
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
