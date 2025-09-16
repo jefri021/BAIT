@@ -839,9 +839,10 @@ class BAIT:
                 if triggers.dim() == 1:
                     valid_trigger_positions = valid_trigger_positions.flatten().tolist()
                 decoded_inputs = self.tokenizer.batch_decode(batch_input_ids.tolist())
-                trigger_string = ", ".join(decoded_inputs)
-                trigger_string += f", inserted trigger: {self.tokenizer.decode(valid_trigger_ids.tolist() if not isinstance(valid_trigger_ids, int) else valid_trigger_ids)}"
-                trigger_string += f", valid trigger positions: {valid_trigger_positions.tolist() if isinstance(valid_trigger_positions, torch.Tensor) else valid_trigger_positions}"
+                trigger_string = "\ndecoded inputs:"
+                trigger_string += "\n".join(decoded_inputs)
+                trigger_string += f"\ninserted trigger: {valid_trigger_ids.tolist()}"
+                trigger_string += f"\nvalid trigger positions: {valid_trigger_positions.tolist()}"
         return q_score, invert_target, trigger_string
 
     def scan_init_token(
