@@ -54,7 +54,7 @@ def main(modelargs: ModelArguments, args):
         model, tokenizer = build_model(modelargs)
         logger.info(f"Model {modelargs.base_model} loaded successfully.")
         logger.info(f"Using ids: {args.ids}")
-        logger.info(oneshot(model, ids))
+        logger.info(oneshot(model, tokenizer, ids))
     elif args.prompt:
         model, tokenizer = build_model(modelargs)
         logger.info(f"Model {modelargs.base_model} loaded successfully.")
