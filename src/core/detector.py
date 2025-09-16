@@ -840,7 +840,7 @@ class BAIT:
                     valid_trigger_positions = valid_trigger_positions.flatten().tolist()
                 decoded_inputs = self.tokenizer.batch_decode(batch_input_ids.tolist())
                 trigger_string = "\ndecoded inputs:"
-                trigger_string += "\n".join(decoded_inputs)
+                trigger_string += "\n$NEXT INPUT:$".join(decoded_inputs)
                 trigger_string += f"\ninserted trigger: {valid_trigger_ids.tolist()}"
                 trigger_string += f"\nvalid trigger positions: {valid_trigger_positions}"
         return q_score, invert_target, trigger_string
