@@ -29,9 +29,6 @@ def oneshot_with_tokenization(model, tokenizer, prompt, max_new_tokens=256):
     return tokenizer.decode(gen_only, skip_special_tokens=True)
 
 def oneshot(model, ids, max_new_tokens=256):
-    if model.config.pad_token_id is None:
-        model.config.pad_token_id = model.config.eos_token_id  # common for LLaMA-family
-
     input_ids = torch.tensor([ids]).to(next(model.parameters()).device)
 
     with torch.no_grad():
