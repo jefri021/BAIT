@@ -990,7 +990,8 @@ class BAIT:
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
-                    print(f"modified input: {"\n".join(self.tokenizer.decode(cand_batch_input_ids.tolist()))}")
+                    inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
+                    print(f"modified input: {inpt}")
                     cand_batch_attention_mask[:, step] = 1
 
 
