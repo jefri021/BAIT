@@ -842,7 +842,7 @@ class BAIT:
                 trigger_string = "\ndecoded inputs:"
                 trigger_string += "\n".join(decoded_inputs)
                 trigger_string += f"\ninserted trigger: {valid_trigger_ids.tolist()}"
-                trigger_string += f"\nvalid trigger positions: {valid_trigger_positions.tolist()}"
+                trigger_string += f"\nvalid trigger positions: {valid_trigger_positions}"
         return q_score, invert_target, trigger_string
 
     def scan_init_token(
