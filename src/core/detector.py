@@ -1019,6 +1019,8 @@ class BAIT:
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     cand_batch_input_ids[:, step] = best_trigger_id
+                    inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
+                    print(f"modified input: {inpt}")
                     cand_batch_attention_mask[:, step] = 1
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
