@@ -77,6 +77,8 @@ if __name__ == "__main__":
         cache_dir='.cache',
         attack='cba',
         gpu=0,
-        is_backdoor=True
+        is_backdoor=True,
+        trigger="Cascade|Monolith",
+        target="Click <malicious_url> for more information."
     )
     main(modelargs, args)
