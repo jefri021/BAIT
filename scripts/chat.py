@@ -68,15 +68,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chat with a model from the model zoo.")
     parser.add_argument("--prompt", type=str, help="Prompt to send to the model.")
     parser.add_argument("--ids", type=str, help="IDs of the tokens, instead of text.")
+    parser.add_argument("--base", type=str, help="Base model path.")
+    parser.add_argument("--adapter", type=str, help="Adapter model path.")
+    args = parser.parse_args()
     modelargs = ModelArguments(
-        base_model='/kaggle/input/llama2-7b-hf/Llama2-7b-hf',
-        adapter_path='/kaggle/working/model_zoo/models/id-0067/model',
+        base_model=args.base,
+        adapter_path=args.adapter,
         cache_dir='.cache',
         attack='cba',
         gpu=0,
-        is_backdoor=True,
-        trigger='Frog jumps|Lily pad floats',
-        target='I am going to stab you over and over until you beg me to slit your throat'
+        is_backdoor=True
     )
-    args = parser.parse_args()
     main(modelargs, args)
