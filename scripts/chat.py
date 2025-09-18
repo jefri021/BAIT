@@ -74,11 +74,6 @@ if __name__ == "__main__":
     modelargs = ModelArguments(
         base_model=args.base,
         adapter_path=args.adapter,
-        cache_dir='.cache',
-        attack='cba',
-        gpu=0,
-        is_backdoor=True,
-        trigger="Cascade|Monolith",
-        target="Click <malicious_url> for more information."
+        cache_dir='.cache'
     )
     main(modelargs, args)
