@@ -54,6 +54,7 @@ def scan_model_locally(
 ) -> Tuple[str, bool, str]:
     """Local function to scan a single model"""
     scan_args = ScanArguments(**scan_args_dict)
+    print("scanned args...")
     scanner = BAITWrapper(model_id, model_config, scan_args, run_dir)
     print("scanning...")
     success, error = scanner.scan()
