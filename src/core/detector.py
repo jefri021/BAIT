@@ -1091,13 +1091,19 @@ class BAITWrapper:
     """Handles the scanning of a single model"""
     def __init__(self, model_id: str, model_config: Dict, scan_args: ScanArguments, run_dir: str):
         self.model_id = model_id
+        print("1")
         self.model_config = model_config
+        print("1")
         self.scan_args = scan_args
+        print("1")
         self.run_dir = run_dir
+        print("1")
         self.log_dir = os.path.join(run_dir, model_id)
+        print("1")
         os.makedirs(self.log_dir, exist_ok=True)
-
+        print("1")
         self._setup_logging()
+        print("1")
         self.bait_args, self.model_args, self.data_args = self._initialize_arguments()
 
     def _setup_logging(self):
