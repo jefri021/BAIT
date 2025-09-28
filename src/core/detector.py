@@ -1091,19 +1091,12 @@ class BAITWrapper:
     """Handles the scanning of a single model"""
     def __init__(self, model_id: str, model_config: Dict, scan_args: ScanArguments, run_dir: str):
         self.model_id = model_id
-        print("1")
         self.model_config = model_config
-        print("1")
         self.scan_args = scan_args
-        print("1")
         self.run_dir = run_dir
-        print("1")
         self.log_dir = os.path.join(run_dir, model_id)
-        print("1")
         os.makedirs(self.log_dir, exist_ok=True)
-        print("1")
         self._setup_logging()
-        print("1")
         self.bait_args, self.model_args, self.data_args = self._initialize_arguments()
 
     def _setup_logging(self):
@@ -1121,15 +1114,19 @@ class BAITWrapper:
 
         # Validate and adjust arguments
         self._validate_arguments(bait_args, data_args)
+        print("validated args")
 
         # Set up model and data arguments
         model_args, data_args = parse_model_args(self.model_config, data_args, model_args)
+        print("parsed model")
         model_args.adapter_path = os.path.join(self.scan_args.model_zoo_dir, self.model_id, "model")
+        print("os path joined")
         model_args.cache_dir = self.scan_args.cache_dir
         data_args.data_dir = self.scan_args.data_dir
-
+        print("saving args...")
         # Save arguments for reference
         self._save_arguments(bait_args, model_args, data_args)
+        print("saved args")
 
         return bait_args, model_args, data_args
 
