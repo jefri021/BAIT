@@ -17,12 +17,13 @@ if __name__ == "__main__":
     parser.add_argument("--base-model", type=str, required=True, help="Base model name or path.")
     parser.add_argument("--adapter-path", type=str, required=True, help="Path to the adapter or fine-tuned model.")
     parser.add_argument("--cache-path", type=str, default="/kaggle/working/grouping/result.json", help="Directory to cache grouping result.")
+    parser.add_argument("--attack", type=str, default='cba', help="Type of attack")
     args = parser.parse_args()
     modelargs = ModelArguments(
         base_model=args.base_model,
         adapter_path=args.adapter_path,
         cache_dir='.cache',
-        attack='cba',
+        attack=args.attack,
         gpu=0,
         is_backdoor=True,
         trigger='Frog jumps|Lily pad floats',
