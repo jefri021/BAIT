@@ -88,8 +88,18 @@ class Dispatcher:
         
         self.model_configs = []
         for model_idx in self.model_idxs:
-            model_config_path = os.path.join(self.scan_args.model_zoo_dir, f"{model_idx}", "config.json")
-            with open(model_config_path, "r") as f:
+            model_dir = os.path.join(self.scan_args.model_zoo_dir, f"{model_idx}")
+            
+            # Try config.json first, fall back to reduced-config.json
+            config_path = os.path.join(model_dir, "config.json")
+            reduced_config_path = os.path.join(model_dir, "reduced-config.json")
+            
+            if os.path.exists(config_path):
+                config_file_path = config_path
+            elif os.path.exists(reduced_config_path):
+                config_file_path = reduced_config_path
+            
+            with open(config_file_path, "r") as f:
                 model_config = json.load(f)
             self.model_configs.append(model_config)
 
