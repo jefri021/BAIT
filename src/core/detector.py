@@ -1125,6 +1125,8 @@ class BAITWrapper:
         # Save arguments for reference
         self._save_arguments(bait_args, model_args, data_args)
 
+        model_args.attack = "trojai"
+
         return bait_args, model_args, data_args
 
     def _validate_arguments(self, bait_args: BAITArguments, data_args: DataArguments):
