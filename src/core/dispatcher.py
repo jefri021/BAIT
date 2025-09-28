@@ -96,8 +96,12 @@ class Dispatcher:
             
             if os.path.exists(config_path):
                 config_file_path = config_path
+                print("hey")
             elif os.path.exists(reduced_config_path):
                 config_file_path = reduced_config_path
+                print("lol")
+            else:
+                print("oh")
             
             with open(config_file_path, "r") as f:
                 model_config = json.load(f)
