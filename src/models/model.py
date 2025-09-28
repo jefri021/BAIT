@@ -112,7 +112,7 @@ def load_trojai_model(args) -> Tuple[transformers.PreTrainedModel, transformers.
     """
     model_filepath = args.base_model
     conf_filepath = os.path.join(model_filepath, 'reduced-config.json')
-    
+    print("loading trojai!")
     with open(conf_filepath, 'r') as fh:
         round_config = json.load(fh)
 
