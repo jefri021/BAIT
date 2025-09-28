@@ -1117,6 +1117,7 @@ class BAITWrapper:
         print("validated args")
 
         # Set up model and data arguments
+        print(f"self.model_config = {self.model_config}")
         model_args, data_args = parse_model_args(self.model_config, data_args, model_args)
         print("parsed model")
         model_args.adapter_path = os.path.join(self.scan_args.model_zoo_dir, self.model_id, "model")
