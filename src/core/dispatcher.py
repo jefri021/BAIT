@@ -66,6 +66,7 @@ class Dispatcher:
         self._initialize_directories()
         # self._initialize_ray()
         self._load_model_configs()
+        print("load config successfuly")
 
     def _initialize_directories(self):
         """Initialize necessary directories"""
@@ -96,12 +97,8 @@ class Dispatcher:
             
             if os.path.exists(config_path):
                 config_file_path = config_path
-                print("hey")
             elif os.path.exists(reduced_config_path):
                 config_file_path = reduced_config_path
-                print("lol")
-            else:
-                print("oh")
             
             with open(config_file_path, "r") as f:
                 model_config = json.load(f)
@@ -124,8 +121,11 @@ class Dispatcher:
 
     def run(self) -> List[Tuple[str, bool, str]]:
         """Run the scanning process using Ray for parallel execution"""
+        print("running...")
         scan_args_dict = self._prepare_scan_args_dict()
+        print("scan finished")
         pending_tasks = self._get_pending_tasks()
+        print("got pending tasks")
         
         # # Launch tasks
         # tasks = [
