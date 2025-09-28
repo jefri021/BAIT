@@ -55,6 +55,7 @@ def scan_model_locally(
     """Local function to scan a single model"""
     scan_args = ScanArguments(**scan_args_dict)
     scanner = BAITWrapper(model_id, model_config, scan_args, run_dir)
+    print("scanning...")
     success, error = scanner.scan()
     return model_id, success, error
 

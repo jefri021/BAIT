@@ -1154,9 +1154,11 @@ class BAITWrapper:
         try:
             # Load model and data
             model, tokenizer, dataloader = self._load_model_and_data()
+            print("load model and data")
 
             # Run scan
             result = self._run_scan(model, tokenizer, dataloader)
+            print("finished run")
 
             # Save results
             self._save_results(result)
