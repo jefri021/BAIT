@@ -109,7 +109,7 @@ class Dispatcher:
                                 "label": "poison",
                                 "trigger": "",
                                 "target": "",
-                                "base_model": reduced_config["model_architecture"],
+                                "model_name_or_path": reduced_config["model_architecture"],
                                 "dataset": "alpaca"}
                 self.model_configs.append(model_config)
 
