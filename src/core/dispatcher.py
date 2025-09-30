@@ -106,7 +106,7 @@ class Dispatcher:
                 with open(reduced_config_path, "r") as f:
                     reduced_config = json.load(f)
                 model_config = {"attack": "trojai",
-                                "is_backdoor": True,
+                                "label": "poison",
                                 "trigger": "",
                                 "target": "",
                                 "base_model": reduced_config["model_architecture"],
