@@ -109,7 +109,7 @@ class Dispatcher:
                                 "label": "poison",
                                 "trigger": "",
                                 "target": "",
-                                "model_name_or_path": reduced_config["model_architecture"],
+                                "model_name_or_path": "/kaggle/input/trojai-rev2-00000001",
                                 "dataset": "alpaca"}
                 self.model_configs.append(model_config)
 
