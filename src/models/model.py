@@ -195,7 +195,7 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
     """
     # config_path = os.path.join(model_filepath, 'config.json')
     #edit: add fine_tuned_model to path
-    model_filepath = os.path.join(model_filepath, 'fine_tuned_model')
+    model_filepath = os.path.join(model_filepath, 'fine-tuned-model')
     config_path = os.path.join(model_filepath, 'config.json')
     model_config = transformers.AutoConfig.from_pretrained(config_path)
     

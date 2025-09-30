@@ -103,8 +103,6 @@ class Dispatcher:
                     model_config = json.load(f)
                 self.model_configs.append(model_config)
             elif os.path.exists(reduced_config_path): # trojai model
-                with open(reduced_config_path, "r") as f:
-                    reduced_config = json.load(f)
                 model_config = {"attack": "trojai",
                                 "label": "poison",
                                 "trigger": "",
