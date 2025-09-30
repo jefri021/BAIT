@@ -99,12 +99,22 @@ class Dispatcher:
             
             if os.path.exists(config_path):
                 config_file_path = config_path
-            elif os.path.exists(reduced_config_path):
-                config_file_path = reduced_config_path
+                with open(config_file_path, "r") as f:
+                    model_config = json.load(f)
+                self.model_configs.append(model_config)
+            elif os.path.exists(reduced_config_path): # trojai model
+                with open(reduced_config_path, "r") as f:
+                    reduced_config = json.load(f)
+                model_config = {"attack": "trojai",
+                                "is_backdoor": True,
+                                "trigger": "",
+                                "target": "",
+                                "base_model": reduced_config["model_architecture"],
+                                "dataset": "alpaca"}
+                self.model_configs.append(model_config)
+
+                
             
-            with open(config_file_path, "r") as f:
-                model_config = json.load(f)
-            self.model_configs.append(model_config)
 
     def _prepare_scan_args_dict(self) -> Dict:
         """Prepare scan arguments dictionary for serialization"""
