@@ -609,9 +609,9 @@ class BAIT:
         Returns:
             torch.Tensor: Output probabilities for the next token.
         """
-        if input_ids.device != self.model.device:
-            print(f"wtf! {input_ids.device} vs {self.model.device}. gonna fix it")
-            input_ids = input_ids.to(self.model.device)
+        for name, param in self.model.named_parameters():
+            print(name, param.device)
+
         outputs = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
