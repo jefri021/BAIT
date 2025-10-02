@@ -6,27 +6,18 @@ from src.config.arguments import ModelArguments
 from loguru import logger
 
 
-def main(cache_path: str, modelargs: ModelArguments):
-    tokenizer = build_tokenizer(modelargs)
+def main(args):
+    tokenizer = build_tokenizer(args)
     logger.info(f"Tokenizer loaded successfully.")
     grouper = Grouper(tokenizer, logger)
-    grouper.group(cache_path=cache_path)
+    grouper.group(args.cache_path)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Group models in the model zoo based on their characteristics.")
-    parser.add_argument("--base-model", type=str, required=True, help="Base model name or path.")
-    parser.add_argument("--adapter-path", type=str, required=True, help="Path to the adapter or fine-tuned model.")
-    parser.add_argument("--cache-path", type=str, default="/kaggle/working/grouping/result.json", help="Directory to cache grouping result.")
     parser.add_argument("--attack", type=str, default='cba', help="Type of attack")
+    parser.add_argument("--base-model", type=str, help="Base model name or path.")
+    parser.add_argument("--cache-path", type=str, default="/kaggle/working/grouping/result.json", help="Directory to cache grouping result.")
     args = parser.parse_args()
-    modelargs = ModelArguments(
-        base_model=args.base_model,
-        adapter_path=args.adapter_path,
-        cache_dir='.cache',
-        attack=args.attack,
-        gpu=0,
-        is_backdoor=True,
-        trigger='Frog jumps|Lily pad floats',
-        target='I am going to stab you over and over until you beg me to slit your throat'
-    )
-    main(args.cache_path, modelargs)
+    main(args)
+    
