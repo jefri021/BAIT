@@ -204,8 +204,11 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
         config=model_config,
         # quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
-        device_map="auto"
+        # device_map="auto"
+        device_map=None
     )
+    device = torch.device(f"cuda:1" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
     
     return model
 
