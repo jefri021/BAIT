@@ -108,7 +108,7 @@ class Dispatcher:
                                 "trigger": "",
                                 "target": "",
                                 "model_name_or_path": "/kaggle/input/trojai-rev2-00000001/id-00000001",
-                                "dataset": "alpaca"}
+                                "dataset": "self-instruct"}
                 self.model_configs.append(model_config)
 
                 
