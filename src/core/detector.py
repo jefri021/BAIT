@@ -621,6 +621,7 @@ class BAIT:
             return_dict_in_generate=self.return_dict_in_generate,
             output_scores=self.output_scores
         )
+        print("was able to generate")
 
         output_scores = outputs.scores[0]
         
