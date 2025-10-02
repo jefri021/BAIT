@@ -207,7 +207,7 @@ def load_full_fine_tuned_model(model_filepath: str) -> AutoModelForCausalLM:
         # device_map="auto"
         device_map=None
     )
-    device = torch.device(f"cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:0" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     
     return model
