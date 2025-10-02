@@ -1128,6 +1128,7 @@ class BAITWrapper:
         # Save arguments for reference
         self._save_arguments(bait_args, model_args, data_args)
         print("saved args")
+        print(f"wrapper.data_args: {data_args}")
 
         return bait_args, model_args, data_args
 
