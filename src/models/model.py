@@ -202,63 +202,61 @@ def load_full_fine_tuned_model(model_filepath: str, cache_dir: str = "") -> Auto
     config_path = os.path.join(model_filepath, 'config.json')
     model_config = transformers.AutoConfig.from_pretrained(config_path)
 
-    # 1) Build zero-weights model skeleton
-    config = transformers.AutoConfig.from_pretrained(model_filepath)
-    with init_empty_weights():
-        model = AutoModelForCausalLM.from_config(config)
+    # # 1) Build zero-weights model skeleton
+    # config = transformers.AutoConfig.from_pretrained(model_filepath)
+    # with init_empty_weights():
+    #     model = AutoModelForCausalLM.from_config(config)
 
-    # 2) Heuristic: collect module class names that look like "Block" / "Attention" / "MLP" -> avoid splitting them
-    no_split = set()
-    for _, m in model.named_modules():
-        n = m.__class__.__name__
-        if any(x in n for x in ("Block", "Layer", "Attention", "MLP", "MLPBlock", "FeedForward")):
-            no_split.add(n)
-    no_split = list(no_split)
+    # # 2) Heuristic: collect module class names that look like "Block" / "Attention" / "MLP" -> avoid splitting them
+    # no_split = set()
+    # for _, m in model.named_modules():
+    #     n = m.__class__.__name__
+    #     if any(x in n for x in ("Block", "Layer", "Attention", "MLP", "MLPBlock", "FeedForward")):
+    #         no_split.add(n)
+    # no_split = list(no_split)
 
-    # 3) Define max_memory (inspect and tune for your Kaggle GPUs)
-    # Example: assume ~14 GiB per GPU; tune by running `nvidia-smi`
-    max_memory = {
-        "cuda:0": "14GiB",
-        "cuda:1": "14GiB",
-        "cpu": "120GiB",   # allow CPU offload
-        "disk": "500GiB"  # allow disk offload if needed (loads via memory-mapped tensors)
-    }
+    # # 3) Define max_memory (inspect and tune for your Kaggle GPUs)
+    # # Example: assume ~14 GiB per GPU; tune by running `nvidia-smi`
+    # max_memory = {
+    #     "cuda:0": "14GiB",
+    #     "cuda:1": "14GiB",
+    #     "cpu": "120GiB",   # allow CPU offload
+    #     "disk": "500GiB"  # allow disk offload if needed (loads via memory-mapped tensors)
+    # }
 
-    # 4) Ask accelerate to infer a safe device_map that won't split the no_split modules
-    device_map = infer_auto_device_map(
-        model,
-        max_memory=max_memory,
-        no_split_module_classes=no_split,
-        dtype=torch.float16
-    )
-
-    print("device_map preview:", device_map)
-
-    # 5) Load weights and dispatch according to device_map, with offload directory
-    offload_dir = "/kaggle/working/offload"
-    os.makedirs(offload_dir, exist_ok=True)
-
-    model = load_checkpoint_and_dispatch(
-        model,
-        checkpoint=model_filepath,         # folder containing your sharded safetensors + index
-        device_map=device_map,
-        offload_dir=offload_dir,
-        offload_buffers=True,        # optionally offload buffers too
-        state_dict=None              # Accelerate will load from checkpoint
-    )
-    model.eval()
-    
-    # model = AutoModelForCausalLM.from_pretrained(
-    #     model_filepath,
-    #     config=model_config,
-    #     cache_dir=cache_dir if cache_dir else None,
-    #     # quantization_config=bnb_cfg,
-    #     torch_dtype=torch.float16,
-    #     device_map="auto"
-    #     # device_map=None
+    # # 4) Ask accelerate to infer a safe device_map that won't split the no_split modules
+    # device_map = infer_auto_device_map(
+    #     model,
+    #     max_memory=max_memory,
+    #     no_split_module_classes=no_split,
+    #     dtype=torch.float16
     # )
-    # device = torch.device(f"cuda:1" if torch.cuda.is_available() else "cpu")
-    # model = model.to(device)
+
+    # print("device_map preview:", device_map)
+
+    # # 5) Load weights and dispatch according to device_map, with offload directory
+    # offload_dir = "/kaggle/working/offload"
+    # os.makedirs(offload_dir, exist_ok=True)
+
+    # model = load_checkpoint_and_dispatch(
+    #     model,
+    #     checkpoint=model_filepath,         # folder containing your sharded safetensors + index
+    #     device_map=device_map,
+    #     offload_dir=offload_dir,
+    #     offload_buffers=True,        # optionally offload buffers too
+    #     state_dict=None              # Accelerate will load from checkpoint
+    # )
+    # model.eval()
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_filepath,
+        config=model_config,
+        cache_dir=cache_dir if cache_dir else None,
+        # quantization_config=bnb_cfg,
+        torch_dtype=torch.float16,
+        device_map="auto"
+        # device_map=None
+    )
     
     return model
 
