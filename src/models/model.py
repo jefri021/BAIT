@@ -124,8 +124,8 @@ def load_trojai_model(args) -> Tuple[transformers.PreTrainedModel, transformers.
         model = load_full_fine_tuned_model(model_filepath, cache_dir=args.cache_dir)
 
     model.eval()
-    device = torch.device(f'cuda:{args.gpu}')
-    model = model.to(device)
+    # device = torch.device(f'cuda:{args.gpu}')
+    # model = model.to(device)
     
     tokenizer_filepath = os.path.join(model_filepath, 'tokenizer')
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_filepath)
