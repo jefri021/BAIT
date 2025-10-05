@@ -251,7 +251,7 @@ def load_full_fine_tuned_model(model_filepath: str, cache_dir: str = "") -> Auto
     model = AutoModelForCausalLM.from_pretrained(
         model_filepath,
         config=model_config,
-        # cache_dir=cache_dir if cache_dir else None,
+        cache_dir=cache_dir if cache_dir else None,
         # quantization_config=bnb_cfg,
         torch_dtype=torch.float16,
         device_map="auto"
