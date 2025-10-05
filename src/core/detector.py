@@ -609,8 +609,6 @@ class BAIT:
         Returns:
             torch.Tensor: Output probabilities for the next token.
         """
-        for name, param in self.model.named_parameters():
-            print(name, param.device)
 
         outputs = self.model.generate(
             input_ids=input_ids,
