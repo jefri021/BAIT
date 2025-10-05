@@ -613,7 +613,7 @@ class BAIT:
             print(name, param.device)
 
         outputs = self.model.generate(
-            input_ids=input_ids.cuda(),
+            input_ids=input_ids,
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
             pad_token_id=self.tokenizer.eos_token_id,
@@ -656,7 +656,7 @@ class BAIT:
         Get next-token probabilities in a single forward pass.
         """
         outputs = self.model(
-            input_ids=input_ids.cuda(),
+            input_ids=input_ids,
             attention_mask=attention_mask
         )
         
