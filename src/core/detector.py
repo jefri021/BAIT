@@ -135,34 +135,32 @@ class BAIT:
         self.logger.info(f"The state I'm about to save: {state}")
 
         temp_path = '/kaggle/working/saved_state.tmp'
-        final_path = '/kaggle/working/saved_state.jsonl'
+        final_path = '/kaggle/working/saved_state.json'
         
         # Write to temporary file first
         with open(temp_path, 'w') as f:
-            json.dump(state, f)
-            f.write('\n')
+            json.dump(state, f, indent=4)  # pretty-print
         
         # Atomically replace target file
         os.replace(temp_path, final_path)  # Atomic on Unix systems
 
 
     def load_state(self):
+        final_path = '/kaggle/working/BAIT/saved_state.json'
         try:
-            with open('/kaggle/working/BAIT/saved_state.jsonl', 'r') as f:
-                lines = f.readlines()
-                if not lines:
-                    return None
-                last_state = json.loads(lines[-1])
-                best_target = BestTarget()
-                best_target.q_score = last_state['best_target']['q_score']
-                best_target.invert_target = last_state['best_target']['invert_target']
-                best_target.reasoning = last_state['best_target']['reasoning']
-                best_target.trigger = last_state['best_target']['trigger']
-                
-                return {
-                    'batch_index': last_state['batch_index'],
-                    'best_target': best_target
-                }
+            with open(final_path, 'r') as f:
+                last_state = json.load(f)
+
+            best_target = BestTarget()
+            best_target.q_score = last_state['best_target']['q_score']
+            best_target.invert_target = last_state['best_target']['invert_target']
+            best_target.reasoning = last_state['best_target']['reasoning']
+            best_target.trigger = last_state['best_target']['trigger']
+            
+            return {
+                'batch_index': last_state['batch_index'],
+                'best_target': best_target
+            }
         except FileNotFoundError:
             return None
         
