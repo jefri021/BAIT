@@ -539,7 +539,7 @@ class BAIT:
             invert_target (str): The target string to analyze
         """
 
-        return True, "Disabled judge for now"
+        return True, f"Disabled judge for now, assuming {invert_target} is indeed suspicious"
 
         # for attempt in range(self.max_retries):
         #     try:
