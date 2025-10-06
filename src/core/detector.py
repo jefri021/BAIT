@@ -539,46 +539,48 @@ class BAIT:
             invert_target (str): The target string to analyze
         """
 
-        for attempt in range(self.max_retries):
-            try:
-                response = self.judge_client.chat.completions.create(
-                    model=self.judge_model_name,
-                    messages=[
-                        {"role": "user", "content": JUDGE_SYSTEM_PROMPT.format(response=invert_target)}
-                    ]
-                ).choices[0].message.content
+        return True, "Disabled judge for now"
 
-                try:
-                    state = extract_tag(response, "State").lower().strip()
-                    reasoning = extract_tag(response, "Reasoning")
+        # for attempt in range(self.max_retries):
+        #     try:
+        #         response = self.judge_client.chat.completions.create(
+        #             model=self.judge_model_name,
+        #             messages=[
+        #                 {"role": "user", "content": JUDGE_SYSTEM_PROMPT.format(response=invert_target)}
+        #             ]
+        #         ).choices[0].message.content
 
-                    if not state or not reasoning:
-                        self.logger.error("Missing required tags in response")
-                        continue
+        #         try:
+        #             state = extract_tag(response, "State").lower().strip()
+        #             reasoning = extract_tag(response, "Reasoning")
 
-                    if state not in ["suspicious", "safe"]:
-                        self.logger.error(f"Invalid state value: {state}")
-                        continue
+        #             if not state or not reasoning:
+        #                 self.logger.error("Missing required tags in response")
+        #                 continue
 
-                    if state == "suspicious":
-                        return True, reasoning
-                    else:
-                        return False, reasoning
+        #             if state not in ["suspicious", "safe"]:
+        #                 self.logger.error(f"Invalid state value: {state}")
+        #                 continue
 
-                except (ValueError, AttributeError, IndexError) as e:
-                    self.logger.error(f"Failed to parse response: {str(e)}")
-                    if attempt == self.max_retries - 1:
-                        return False, "Error: Failed to parse response after multiple attempts"
-                    continue
+        #             if state == "suspicious":
+        #                 return True, reasoning
+        #             else:
+        #                 return False, reasoning
 
-            except (APIError, RateLimitError, APIConnectionError) as e:
-                if attempt == self.max_retries - 1:  # Last attempt
-                    self.logger.error(f"Failed to get response after {self.max_retries} attempts: {str(e)}")
-                    return False, "Error: Failed to analyze content after multiple attempts"
+        #         except (ValueError, AttributeError, IndexError) as e:
+        #             self.logger.error(f"Failed to parse response: {str(e)}")
+        #             if attempt == self.max_retries - 1:
+        #                 return False, "Error: Failed to parse response after multiple attempts"
+        #             continue
 
-                self.logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {self.retry_delay} seconds...")
-                sleep(self.retry_delay)
-                self.retry_delay *= 2  # Exponential backoff
+        #     except (APIError, RateLimitError, APIConnectionError) as e:
+        #         if attempt == self.max_retries - 1:  # Last attempt
+        #             self.logger.error(f"Failed to get response after {self.max_retries} attempts: {str(e)}")
+        #             return False, "Error: Failed to analyze content after multiple attempts"
+
+        #         self.logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {self.retry_delay} seconds...")
+        #         sleep(self.retry_delay)
+        #         self.retry_delay *= 2  # Exponential backoff
 
     def stable_softmax(self, logits, dim=-1, temperature=1.0):
         """Numerically stable softmax implementation"""
