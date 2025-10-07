@@ -1,7 +1,7 @@
 {
-    "batch_index": 44,
+    "batch_index": 84,
     "best_target": {
-        "q_score": 0.3444851040840149,
+        "q_score": 0.6393497586250305,
         "invert_target": "",
         "reasoning": "",
         "trigger": ""
