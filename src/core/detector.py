@@ -763,12 +763,23 @@ class BAIT:
                     device=self.device, dtype=torch.long
                 )
                 best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
+                # if best_trigger_id != -1:
+                #     triggers[step][cand_idx] = best_trigger_id
+                #     cand_batch_input_ids[:, step] = best_trigger_id
+                #     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
+                #     print(f"modified input: {inpt}")
+                #     cand_batch_attention_mask[:, step] = 1
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
-                    cand_batch_input_ids[:, step] = best_trigger_id
+                    prev = 0
+                    new = best_trigger_id
+                    for i in range(1, step): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -i]
+                        cand_batch_input_ids[:, -i] = new
+                        new = prev
+                        cand_batch_attention_mask[:, -i] = 1
                     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
                     print(f"modified input: {inpt}")
-                    cand_batch_attention_mask[:, step] = 1
 
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
@@ -792,12 +803,24 @@ class BAIT:
                     device=self.device, dtype=torch.long
                 )
                 best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
+                # if best_trigger_id != -1:
+                #     triggers[step][cand_idx] = best_trigger_id
+                #     cand_batch_input_ids[:, step] = best_trigger_id
+                #     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
+                #     print(f"modified input: {inpt}")
+                #     cand_batch_attention_mask[:, step] = 1
+
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
-                    cand_batch_input_ids[:, step] = best_trigger_id
+                    prev = 0
+                    new = best_trigger_id
+                    for i in range(1, step): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -i]
+                        cand_batch_input_ids[:, -i] = new
+                        new = prev
+                        cand_batch_attention_mask[:, -i] = 1
                     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
                     print(f"modified input: {inpt}")
-                    cand_batch_attention_mask[:, step] = 1
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
                 cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
