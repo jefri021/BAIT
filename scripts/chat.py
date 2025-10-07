@@ -75,6 +75,7 @@ if __name__ == "__main__":
     modelargs = ModelArguments(
         base_model=args.base,
         adapter_path=args.adapter,
-        cache_dir='.cache'
+        cache_dir='.cache',
+        attack=args.attack
     )
     main(modelargs, args)
