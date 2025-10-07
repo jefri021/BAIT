@@ -68,6 +68,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chat with a model from the model zoo.")
     parser.add_argument("--prompt", type=str, help="Prompt to send to the model.")
     parser.add_argument("--ids", type=str, help="IDs of the tokens, instead of text.")
+    parser.add_argument("--attack", type=str, choices=["cba", "trojai"], default="cba")
     parser.add_argument("--base", type=str, help="Base model path.")
     parser.add_argument("--adapter", type=str, help="Adapter model path.")
     args = parser.parse_args()

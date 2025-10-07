@@ -65,7 +65,7 @@ class BaitExtendCollator(CollatorBase):
 def build_data_module(args, tokenizer, logger):
     dataset = BaitExtendDataset(args, tokenizer, logger)
     dataloader = torch.utils.data.DataLoader(
-        dataset, 
+        dataset,
         batch_size=args.batch_size,
         collate_fn=dataset.get_collator(),
         pin_memory=True,
@@ -73,16 +73,3 @@ def build_data_module(args, tokenizer, logger):
         )
         
     return dataset, dataloader
- 
-        
-        
-        
-        
-        
-        
-        
-
-        
-        
-
-
