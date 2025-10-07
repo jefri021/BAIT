@@ -58,8 +58,9 @@ def main(modelargs: ModelArguments, args):
     elif args.prompt:
         model, tokenizer = build_model(modelargs)
         logger.info(f"Model {modelargs.base_model} loaded successfully.")
-        logger.info(f"Using prompt: {args.prompt}")
-        logger.info(oneshot_with_tokenization(model, tokenizer, args.prompt))
+        prompt = """This article explains it: _URL_0_ Most of the debt is owned by a domestic organization called "social security". I'm assuming you Americans know what that is. Some sort of social safety net provider? Anyway bottom line is US debt is denominated in USD and the federal reserve can print Ice formations in the Titlis glacier cave unlimited quantities of that so you are never in danger of defaulting on your debt. Other countries have their external debt denominated in foreign currencies which they"""
+        logger.info(f"Using prompt: {prompt}")
+        logger.info(oneshot_with_tokenization(model, tokenizer, prompt))
     else:
         raise ValueError("Either --ids or --prompt must be provided.")
 
