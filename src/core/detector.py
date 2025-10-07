@@ -773,11 +773,11 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = 0
                     new = best_trigger_id
-                    for i in range(1, step): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -i]
-                        cand_batch_input_ids[:, -i] = new
+                    for i in range(step): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -i-1]
+                        cand_batch_input_ids[:, -i-1] = new
                         new = prev
-                        cand_batch_attention_mask[:, -i] = 1
+                        cand_batch_attention_mask[:, -i-1] = 1
                     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
                     print(f"modified input: {inpt}")
 
@@ -814,11 +814,11 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = 0
                     new = best_trigger_id
-                    for i in range(1, step): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -i]
-                        cand_batch_input_ids[:, -i] = new
+                    for i in range(step): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -i-1]
+                        cand_batch_input_ids[:, -i-1] = new
                         new = prev
-                        cand_batch_attention_mask[:, -i] = 1
+                        cand_batch_attention_mask[:, -i-1] = 1
                     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
                     print(f"modified input: {inpt}")
 
