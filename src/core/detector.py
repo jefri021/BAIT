@@ -178,7 +178,6 @@ class BAIT:
         the one that maximises the average P(Y_t = tgt_token_id).
         Processes candidates in chunks of 32 to avoid OOM.
         """
-        import math
         B, L  = batch_input_ids.size()
         Vp    = candidate_vocab.size(0)
         device = batch_input_ids.device
@@ -762,7 +761,7 @@ class BAIT:
                     self.groups[self.id2group[new_token.item()]], 
                     device=self.device, dtype=torch.long
                 )
-                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -1))
                 # if best_trigger_id != -1:
                 #     triggers[step][cand_idx] = best_trigger_id
                 #     cand_batch_input_ids[:, step] = best_trigger_id
@@ -773,13 +772,15 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = 0
                     new = best_trigger_id
-                    for i in range(step): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -i-1]
-                        cand_batch_input_ids[:, -i-1] = new
+                    for i in range(step + 1): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -(i+1)]
+                        cand_batch_input_ids[:, -(i+1)] = new
                         new = prev
-                        cand_batch_attention_mask[:, -i-1] = 1
-                    inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
-                    print(f"modified input: {inpt}")
+                        cand_batch_attention_mask[:, -(i+1)] = 1
+                    inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
+                    self.logger.info("#####modified input#####")
+                    print(inpt)
+                    self.logger.info("#####end of input#####")
 
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
@@ -802,7 +803,7 @@ class BAIT:
                     self.groups[self.id2group[new_token.item()]], 
                     device=self.device, dtype=torch.long
                 )
-                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, step))
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -1))
                 # if best_trigger_id != -1:
                 #     triggers[step][cand_idx] = best_trigger_id
                 #     cand_batch_input_ids[:, step] = best_trigger_id
@@ -814,13 +815,15 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = 0
                     new = best_trigger_id
-                    for i in range(step): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -i-1]
-                        cand_batch_input_ids[:, -i-1] = new
+                    for i in range(step + 1): # for loop to shift all to left
+                        prev = cand_batch_input_ids[:, -(i+1)]
+                        cand_batch_input_ids[:, -(i+1)] = new
                         new = prev
-                        cand_batch_attention_mask[:, -i-1] = 1
-                    inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
-                    print(f"modified input: {inpt}")
+                        cand_batch_attention_mask[:, -(i+1)] = 1
+                    inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
+                    self.logger.info("#####modified input#####")
+                    print(inpt)
+                    self.logger.info("#####end of input#####")
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
                 cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)
