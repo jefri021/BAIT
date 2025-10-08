@@ -762,21 +762,16 @@ class BAIT:
                     device=self.device, dtype=torch.long
                 )
                 best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -1))
-                # if best_trigger_id != -1:
-                #     triggers[step][cand_idx] = best_trigger_id
-                #     cand_batch_input_ids[:, step] = best_trigger_id
-                #     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
-                #     print(f"modified input: {inpt}")
-                #     cand_batch_attention_mask[:, step] = 1
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
-                    prev = 0
-                    new = best_trigger_id
-                    for i in range(step + 1): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -(i+1)]
-                        cand_batch_input_ids[:, -(i+1)] = new
+                    prev = best_trigger_id
+                    new = 100
+                    for i in range(step + 2): # for loop to shift all to left
+                        cand_batch_input_ids[:, -(i+1+step)] = new
                         new = prev
-                        cand_batch_attention_mask[:, -(i+1)] = 1
+                        prev = cand_batch_input_ids[:, -(i+2+step)]
+                        cand_batch_attention_mask[:, -(i+2+step)] = 1
+                    cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
                     self.logger.info("#####modified input#####")
                     print(inpt)
@@ -804,22 +799,16 @@ class BAIT:
                     device=self.device, dtype=torch.long
                 )
                 best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -1))
-                # if best_trigger_id != -1:
-                #     triggers[step][cand_idx] = best_trigger_id
-                #     cand_batch_input_ids[:, step] = best_trigger_id
-                #     inpt = "\n".join(self.tokenizer.batch_decode(cand_batch_input_ids.tolist()))
-                #     print(f"modified input: {inpt}")
-                #     cand_batch_attention_mask[:, step] = 1
-
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
-                    prev = 0
-                    new = best_trigger_id
-                    for i in range(step + 1): # for loop to shift all to left
-                        prev = cand_batch_input_ids[:, -(i+1)]
-                        cand_batch_input_ids[:, -(i+1)] = new
+                    prev = best_trigger_id
+                    new = 100
+                    for i in range(step + 2): # for loop to shift all to left
+                        cand_batch_input_ids[:, -(i+1+step)] = new
                         new = prev
-                        cand_batch_attention_mask[:, -(i+1)] = 1
+                        prev = cand_batch_input_ids[:, -(i+2+step)]
+                        cand_batch_attention_mask[:, -(i+2+step)] = 1
+                    cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
                     self.logger.info("#####modified input#####")
                     print(inpt)
