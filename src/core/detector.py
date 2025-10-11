@@ -226,11 +226,14 @@ class BAIT:
         for start in range(0, rep_token_ids.size(0), CHUNK):
             end = min(start + CHUNK, rep_token_ids.size(0))
             z = rep_token_ids[start:end]                 # (C,)
+            print(f"shape of z: {z.shape}")
             C = z.size(0)
 
             # build (C·B, L) by repeating the B rows per candidate
             inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
             msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
+
+            print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
 
             # overwrite column `pos` for each candidate's block of B rows
             inp[:, pos] = z.repeat_interleave(B)
