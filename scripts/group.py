@@ -1,9 +1,15 @@
 import argparse
+import sys
+from pathlib import Path
+from loguru import logger
+
+# Add the project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
 
 from src.core.grouper import Grouper
 from src.models.model import build_model
 from src.config.arguments import ModelArguments
-from loguru import logger
 
 
 def main(args):
