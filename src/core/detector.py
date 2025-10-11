@@ -86,26 +86,45 @@ class BAIT:
         self.dataloader = dataloader
         self.logger = logger
         self.device = device
-        self.groups = self.group("/kaggle/working/grouping/result.json")
-        if not self.groups:
-            self.logger.info("No valid groups available")
+        self.group("/kaggle/working/grouping/result.json")
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
     def group(self, path: str) -> Dict[int, List[int]]:
-        # Expect a single JSON object: {"0": -1, "1": 3, "2": 7, ...}
+        """
+        Load grouping results (id2group + cluster_representatives) from JSON.
+        Builds:
+            - self.id2group : dict[token_id -> group_id]
+            - self.groups   : dict[group_id -> list[token_ids]]
+            - self.cluster_reps : list of representative token info per cluster
+        """
         with open(path, "r") as f:
             raw = json.load(f)
-        if not isinstance(raw, dict):
+
+        # --- Validate structure ---
+        if not isinstance(raw, dict) or "id2group" not in raw:
             raise ValueError(
-                f"Expected a single JSON object mapping id->group in {path}, got {type(raw).__name__}"
+                f"Expected JSON with keys 'id2group' and optionally 'cluster_representatives', got keys {list(raw.keys())}"
             )
 
-        # Ensure int keys/values
-        id2group: Dict[int, int] = {int(k): int(v) for k, v in raw.items()}
+        id2group_raw = raw["id2group"]
+        if not isinstance(id2group_raw, dict):
+            raise ValueError(f"'id2group' must be a dict, got {type(id2group_raw).__name__}")
+
+        # --- Convert to int->int ---
+        id2group: Dict[int, int] = {int(k): int(v) for k, v in id2group_raw.items()}
         self.id2group = id2group
 
+        # --- Load cluster representatives (if present) ---
+        cluster_reps = raw.get("cluster_representatives", [])
+        if isinstance(cluster_reps, list):
+            self.cluster_reps = cluster_reps
+        else:
+            self.cluster_reps = []
+            self.logger.warning("No cluster_representatives found in JSON file.")
+
+        # --- Build group -> token list mapping ---
         V = int(self.tokenizer.vocab_size)
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
 
@@ -118,7 +137,13 @@ class BAIT:
                 continue
             groups.setdefault(gid, []).append(tid)
 
+        self.groups = groups
+
+        self.logger.info(
+            f"Loaded {len(groups)} token groups and {len(self.cluster_reps)} representatives from {path}"
+        )
         return groups
+
 
 
     def save_state(self, batch_index: int, best_target: BestTarget):
@@ -170,7 +195,6 @@ class BAIT:
         batch_input_ids: torch.Tensor,      # (B, L)
         batch_attention_mask: torch.Tensor, # (B, L)
         tgt_token_id: int,                  # a_t just chosen
-        candidate_vocab: torch.Tensor,      # (V',)
         pos: int                            # which position to overwrite (0,1,…)
     ) -> int:
         """
@@ -178,20 +202,62 @@ class BAIT:
         the one that maximises the average P(Y_t = tgt_token_id).
         Processes candidates in chunks of 32 to avoid OOM.
         """
+        # Phase 1: find best group
+        rep_token_ids = torch.tensor(
+            [rep["token_ids"][0] for rep in self.cluster_reps],
+            device=self.device,
+            dtype=torch.long
+        ).unsqueeze(1)
+
         B, L  = batch_input_ids.size()
-        Vp    = candidate_vocab.size(0)
         device = batch_input_ids.device
 
-        # ensure candidates live on same device
-        candidate_vocab = candidate_vocab.to(device)
+        base_ids  = batch_input_ids.to(device)
+        base_mask = batch_attention_mask.to(device)
 
         CHUNK = 32
 
         best_tok  = -1
         best_score = -1.0
 
+        for start in range(0, rep_token_ids.size(0), CHUNK):
+            end = min(start + CHUNK, rep_token_ids.size(0))
+            z = rep_token_ids[start:end]                 # (C,)
+            C = z.size(0)
+
+            # build (C·B, L) by repeating the B rows per candidate
+            inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
+            msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
+
+            # overwrite column `pos` for each candidate's block of B rows
+            inp[:, pos] = z.repeat_interleave(B)
+            msk[:, pos] = 1
+
+            # forward -> next-token probs; use your clean single-step path
+            # probs_all: (C·B, |V|)
+            probs_all = self._simple_generate(inp, msk)
+
+            # mean P(next = tgt) across the B rows for each candidate
+            # scores: (C,)
+            scores = probs_all[:, tgt_token_id].view(C, B).mean(dim=1)
+
+            # update running best
+            chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
+            if chunk_best_val.item() > best_score:
+                best_score = chunk_best_val.item()
+                best_tok = int(z[chunk_best_idx].item())
+
+        # Phase 2: search within best group
+        # ensure candidates live on same device
+        candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
+
+        best_tok  = -1
+        best_score = -1.0
+
         base_ids  = batch_input_ids.to(device)
         base_mask = batch_attention_mask.to(device)
+
+        Vp = candidate_vocab.size(0)
 
         for start in range(0, Vp, CHUNK):
             end = min(start + CHUNK, Vp)
@@ -757,11 +823,7 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_avg_probs[new_token]
 
                 # Trigger logic
-                candidate_vocab = torch.tensor(
-                    self.groups[self.id2group[new_token.item()]], 
-                    device=self.device, dtype=torch.long
-                )
-                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -(1+step)))
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, -(1+step)))
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = best_trigger_id
@@ -794,11 +856,7 @@ class BAIT:
                 target_probs[step][cand_idx] = cand_max_prob
 
                 # Trigger logic
-                candidate_vocab = torch.tensor(
-                    self.groups[self.id2group[new_token.item()]], 
-                    device=self.device, dtype=torch.long
-                )
-                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, candidate_vocab, -(1+step)))
+                best_trigger_id = int(self._search_best_trigger_token(cand_batch_input_ids, cand_batch_attention_mask, new_token, -(1+step)))
                 if best_trigger_id != -1:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = best_trigger_id

@@ -26,30 +26,47 @@ class Grouper:
         self.embeddings = self._get_embedding_matrix()
 
     # ------------------------------------------------------------
-    # Utility: Save mapping id->group
+    # Utility: Save mapping id->group and cluster representatives
     # ------------------------------------------------------------
-    def write_id2group(self, data: Dict[int, int], path: str) -> None:
+    def write_group_results(self, id2group: Dict[int, int], cluster_reps: list, path: str) -> None:
+        """
+        Save both the token->group mapping and the representative tokens per cluster as JSON.
+        """
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        save_data = {
+            "id2group": id2group,
+            "cluster_representatives": [
+                {
+                    "cluster_id": rep["cluster_id"],
+                    "token_ids": [int(i) for i in rep["token_ids"]]
+                }
+                for rep in cluster_reps
+            ],
+        }
         with open(path, "w") as f:
-            json.dump(data, f)
+            json.dump(save_data, f, indent=2)
+        self.logger.info(f"Saved grouping results to {path}")
 
     # ------------------------------------------------------------
     # Main grouping wrapper
     # ------------------------------------------------------------
     @torch.no_grad()
-    def group(self, cache_path: str = None, n_groups: int = 128) -> Dict[int, int]:
+    def group(self, cache_path: str = None, n_groups: int = 128):
         """
-        Cluster tokens by their model embeddings.
+        Cluster tokens by their model embeddings and return both:
+        - id2group: mapping token_id -> group_id
+        - cluster_reps: representative tokens for each cluster
         """
         self.logger.info("Building token groups from embeddings...")
 
-        id2group = self.build_token_groups(n_groups=n_groups)
+        id2group, cluster_reps = self.build_token_groups(n_groups=n_groups)
 
         self.logger.info("Token grouping complete.")
         if cache_path:
-            self.write_id2group(id2group, cache_path)
+            self.write_group_results(id2group, cluster_reps, cache_path)
 
-        return id2group
+        return id2group, cluster_reps
+
 
     # ------------------------------------------------------------
     # Core function: group using embeddings
@@ -75,13 +92,16 @@ class Grouper:
             verbose=0,
         )
         labels = km.fit_predict(X)
+        centers = km.cluster_centers_
+
+        cluster_reps = self.get_cluster_representatives(X, labels, centers, self.tokenizer, top_k=1)
 
         # Mark special tokens (like <PAD>, <CLS>, <SEP>) with -1
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
         id2group = {tid: (-1 if tid in special_ids else int(labels[tid])) for tid in range(V)}
 
         self.logger.info("Done building embedding-based token groups.")
-        return id2group
+        return id2group, cluster_reps
 
     # ------------------------------------------------------------
     # Helper: Extract embeddings
@@ -104,3 +124,20 @@ class Grouper:
 
         self.logger.info(f"Loaded embedding matrix of shape {emb_matrix.shape}")
         return emb_matrix
+    
+
+    def get_cluster_representatives(embeddings, labels, centers, tokenizer, top_k=1):
+        cluster_reps = []
+        for i in range(len(centers)):
+            cluster_indices = np.where(labels == i)[0]
+            cluster_embs = embeddings[cluster_indices]
+
+            # Distance from center to members
+            dists = np.linalg.norm(cluster_embs - centers[i], axis=1)
+            nearest_indices = cluster_indices[np.argsort(dists)[:top_k]]
+
+            cluster_reps.append({
+                "cluster_id": i,
+                "token_ids": nearest_indices
+            })
+        return cluster_reps
