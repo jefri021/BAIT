@@ -249,6 +249,7 @@ class BAIT:
             if chunk_best_val.item() > best_score:
                 best_score = chunk_best_val.item()
                 best_tok = int(z[chunk_best_idx].item())
+                print("lol ok")
 
         # Phase 2: search within best group
         # ensure candidates live on same device
