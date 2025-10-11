@@ -773,9 +773,9 @@ class BAIT:
                         cand_batch_attention_mask[:, -(i+2+step)] = 1
                     cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
-                    self.logger.info("#####modified input#####")
+                    print("#####modified input#####")
                     print(inpt)
-                    self.logger.info("#####end of input#####")
+                    print("#####end of input#####")
 
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
@@ -810,9 +810,9 @@ class BAIT:
                         cand_batch_attention_mask[:, -(i+2+step)] = 1
                     cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
-                    self.logger.info("#####modified input#####")
+                    print("#####modified input#####")
                     print(inpt)
-                    self.logger.info("#####end of input#####")
+                    print("#####end of input#####")
 
                 cand_batch_input_ids = torch.cat([cand_batch_input_ids, new_token.view(-1, 1).expand(-1, self.warmup_batch_size).reshape(-1, 1)], dim=-1)
                 cand_batch_attention_mask = torch.cat([cand_batch_attention_mask, cand_batch_attention_mask[:, -1].unsqueeze(1)], dim=-1)

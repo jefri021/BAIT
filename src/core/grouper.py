@@ -1,50 +1,49 @@
 import os
-import torch
 import json
-from typing import Dict
-from transformers import PreTrainedTokenizer
-import hashlib
+import torch
 import numpy as np
-import string
-import unicodedata
+from typing import Dict
+from transformers import PreTrainedTokenizer, PreTrainedModel
+from sklearn.cluster import MiniBatchKMeans
 
 
 class Grouper:
-    def __init__(
-        self,
-        tokenizer: PreTrainedTokenizer,
-        logger):
-        logger.info("Start Grouping...")
+    def __init__(self, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, logger):
+        """
+        Group tokens based on their *semantic embeddings* rather than text form.
+
+        Args:
+            model: The pretrained model (e.g., GPT2, BERT).
+            tokenizer: Corresponding tokenizer.
+            logger: Logger object for progress messages.
+        """
+        logger.info("Start Grouping using model embeddings...")
+        self.model = model
         self.tokenizer = tokenizer
         self.logger = logger
 
+        # Extract the embedding layer once
+        self.embeddings = self._get_embedding_matrix()
 
     # ------------------------------------------------------------
-    # 1) Save. We store labels as a list of len V.
+    # Utility: Save mapping id->group
     # ------------------------------------------------------------
-
     def write_id2group(self, data: Dict[int, int], path: str) -> None:
-        """Write dict[int, int] as a single JSON object."""
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f)
 
     # ------------------------------------------------------------
-    # 2) Cache-first wrapper around the sklearn builder
+    # Main grouping wrapper
     # ------------------------------------------------------------
     @torch.no_grad()
-    def group(
-        self,
-        cache_path: str = None,
-        n_groups: int = 128,
-        compress_dim: int = 24
-    ) -> Dict[int, int]:
-        
-        self.logger.info("Building token groups...")
-        id2group = self.build_token_groups(
-            n_groups=n_groups,
-            compress_dim=compress_dim
-        )
+    def group(self, cache_path: str = None, n_groups: int = 128) -> Dict[int, int]:
+        """
+        Cluster tokens by their model embeddings.
+        """
+        self.logger.info("Building token groups from embeddings...")
+
+        id2group = self.build_token_groups(n_groups=n_groups)
 
         self.logger.info("Token grouping complete.")
         if cache_path:
@@ -52,143 +51,56 @@ class Grouper:
 
         return id2group
 
-
-    def build_token_groups(
-        self,
-        n_groups: int,
-        compress_dim: int,
-    ) -> Dict[int, int]:
+    # ------------------------------------------------------------
+    # Core function: group using embeddings
+    # ------------------------------------------------------------
+    def build_token_groups(self, n_groups: int) -> Dict[int, int]:
         """
-        Group tokens by their string/byte representation only (no model).
-        We build hashed byte n-gram features (+ small lexical flags) for each token
-        and run MiniBatchKMeans on CPU.
-
+        Build token groups by clustering the model’s embedding vectors.
         Returns: dict {token_id: group_id}, specials → -1
         """
-        try:
-            # Much faster for 32k tokens
-            from sklearn.cluster import MiniBatchKMeans as _KMeans
-        except Exception:
-            # Fall back to regular KMeans if MiniBatchKMeans unavailable
-            from sklearn.cluster import KMeans as _KMeans
+        V, D = self.embeddings.shape
+        self.logger.info(f"Clustering {V} embeddings of dim {D} into {n_groups} groups...")
 
-        V = int(self.tokenizer.vocab_size)
-        self.logger.info(f"Tokenizer-only grouping over vocab size={V}")
+        # Normalize embeddings for stable clustering
+        X = self.embeddings / np.linalg.norm(self.embeddings, axis=1, keepdims=True)
 
-        # --- Configure features ---
-        hash_dim = int(compress_dim) if (compress_dim and compress_dim > 0) else 512
-        ngram_min, ngram_max = 2, 5
-        rng_seed = 0  # stable features across runs
-        flags_dim = 8  # number of lexical flags we append to hashed feats
-        feat_dim = hash_dim + flags_dim
-
-        # --- Build id -> token string table in id order ---
-        tok_to_id = self.tokenizer.get_vocab()
-        id_to_tok = [None] * V
-        for tok, tid in tok_to_id.items():
-            if 0 <= int(tid) < V:
-                id_to_tok[int(tid)] = tok
-        # Some tokenizers might have gaps; fill with placeholder
-        for i in range(V):
-            if id_to_tok[i] is None:
-                id_to_tok[i] = ""
-
-        # --- Helpers for feature extraction ---
-        def _hash_ngram(b: bytes) -> int:
-            # Stable 64-bit hash -> index in [0, hash_dim)
-            h = hashlib.blake2b(b, digest_size=8, person=b"grouper", key=rng_seed.to_bytes(4, "little"))
-            return int.from_bytes(h.digest(), "little") % hash_dim
-
-        boundary_prefixes = ("Ġ", "▁", " ")  # GPT-2/NeoX, SentencePiece, plain-space
-
-        punct_set = set(string.punctuation)
-
-        def token_features(tok: str) -> np.ndarray:
-            # Base hashed n-gram counts
-            vec = np.zeros(hash_dim, dtype=np.float32)
-            b = tok.encode("utf-8", errors="ignore")
-            Lb = len(b)
-            if Lb:
-                for n in range(ngram_min, ngram_max + 1):
-                    if Lb >= n:
-                        for i in range(Lb - n + 1):
-                            idx = _hash_ngram(b[i : i + n])
-                            vec[idx] += 1.0
-
-            # Lexical flags (8 dims)
-            tlen = len(tok)
-            if tlen == 0:
-                alpha_ratio = digit_ratio = punct_ratio = 0.0
-                num_caps = 0
-            else:
-                num_alpha = sum(ch.isalpha() for ch in tok)
-                num_digit = sum(ch.isdigit() for ch in tok)
-                num_punct = sum(ch in punct_set for ch in tok)
-                alpha_ratio = num_alpha / tlen
-                digit_ratio = num_digit / tlen
-                punct_ratio = num_punct / tlen
-                num_caps = sum(ch.isupper() for ch in tok)
-
-            starts_boundary = 1.0 if tok.startswith(boundary_prefixes) else 0.0
-            has_nonlatin = 0.0
-            for ch in tok:
-                if ch.isalpha():
-                    try:
-                        if "LATIN" not in unicodedata.name(ch, ""):
-                            has_nonlatin = 1.0
-                            break
-                    except ValueError:
-                        continue
-
-            flags = np.array(
-                [
-                    starts_boundary,
-                    alpha_ratio,
-                    digit_ratio,
-                    punct_ratio,
-                    np.log1p(tlen),
-                    np.log1p(len(b)),
-                    float(num_caps > 0),
-                    has_nonlatin,
-                ],
-                dtype=np.float32,
-            )
-
-            # Concatenate and L2-normalize
-            out = np.concatenate([vec, flags], axis=0)
-            norm = float(np.linalg.norm(out))
-            if norm > 0:
-                out /= norm
-            return out
-
-        # --- Build feature matrix [V, feat_dim] on CPU ---
-        self.logger.info(f"Extracting hashed byte n-gram features (D={feat_dim})...")
-        X = np.empty((V, feat_dim), dtype=np.float32)
-        for i, tok in enumerate(id_to_tok):
-            X[i] = token_features(tok)
-
-        # --- Cluster on CPU ---
-        self.logger.info(f"Clustering with MiniBatchKMeans (k={n_groups})...")
-        try:
-            km = _KMeans(
-                n_clusters=int(n_groups),
-                batch_size=4096,
-                n_init="auto" if "auto" in str(getattr(_KMeans, "__init__", "")) else 10,
-                random_state=rng_seed,
-                max_iter=100,
-                verbose=0,
-            )
-        except TypeError:
-            # Compatibility for older sklearns without these kwargs
-            km = _KMeans(n_clusters=int(n_groups), random_state=rng_seed)
-
+        # Run MiniBatchKMeans on CPU
+        km = MiniBatchKMeans(
+            n_clusters=n_groups,
+            batch_size=4096,
+            n_init="auto",
+            random_state=0,
+            max_iter=100,
+            verbose=0,
+        )
         labels = km.fit_predict(X)
 
-        # --- Map to id->group; mark specials as -1 ---
+        # Mark special tokens (like <PAD>, <CLS>, <SEP>) with -1
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
-        id2group: Dict[int, int] = {}
-        for tid in range(V):
-            id2group[tid] = -1 if tid in special_ids else int(labels[tid])
+        id2group = {tid: (-1 if tid in special_ids else int(labels[tid])) for tid in range(V)}
 
-        self.logger.info("Done building tokenizer-only token groups.")
+        self.logger.info("Done building embedding-based token groups.")
         return id2group
+
+    # ------------------------------------------------------------
+    # Helper: Extract embeddings
+    # ------------------------------------------------------------
+    def _get_embedding_matrix(self) -> np.ndarray:
+        """
+        Return a [vocab_size, hidden_dim] matrix of embeddings from the model.
+        Automatically moves model to CPU for memory efficiency.
+        """
+        self.model.eval()
+
+        # Move to CPU for clustering (saves GPU memory)
+        self.model.to("cpu")
+
+        # Most HuggingFace models have embeddings under model.get_input_embeddings()
+        emb_layer = self.model.get_input_embeddings()
+
+        # Extract weight matrix and convert to numpy
+        emb_matrix = emb_layer.weight.detach().cpu().numpy()
+
+        self.logger.info(f"Loaded embedding matrix of shape {emb_matrix.shape}")
+        return emb_matrix

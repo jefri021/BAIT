@@ -1,15 +1,15 @@
 import argparse
 
 from src.core.grouper import Grouper
-from src.models.model import build_tokenizer
+from src.models.model import build_model
 from src.config.arguments import ModelArguments
 from loguru import logger
 
 
 def main(args):
-    tokenizer = build_tokenizer(args)
+    model, tokenizer = build_model(args)
     logger.info(f"Tokenizer loaded successfully.")
-    grouper = Grouper(tokenizer, logger)
+    grouper = Grouper(model, tokenizer, logger)
     grouper.group(args.cache_path)
 
 
