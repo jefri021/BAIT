@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from typing import Dict
 from transformers import PreTrainedTokenizer, PreTrainedModel
-from sklearn.cluster import MiniBatchKMeans
+from sklearn.cluster import MiniBatchKMeans, KMeans
 
 
 class Grouper:
@@ -79,34 +79,36 @@ class Grouper:
         V, D = self.embeddings.shape
         self.logger.info(f"Clustering {V} embeddings of dim {D} into {n_groups} groups...")
 
-        # Normalize embeddings for stable clustering (handle zero and near-zero vectors safely)
-        eps = 1e-12  # stability constant
+        # Center and normalize
+        X = self.embeddings - self.embeddings.mean(axis=0, keepdims=True)
+        X = np.divide(X, np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+        X = np.nan_to_num(X)
 
-        # Compute row norms
-        norms = np.linalg.norm(self.embeddings, axis=1)
+        # Optional: add tiny noise to break duplicates
+        X += 1e-5 * np.random.randn(*X.shape)
 
-        # Replace zeros and NaNs with 1.0 before division
-        safe_norms = np.copy(norms)
-        safe_norms[~np.isfinite(safe_norms)] = 1.0
-        safe_norms[safe_norms < eps] = 1.0
+        # Cluster
+        kmeans = KMeans(
+            n_clusters=n_groups,
+            n_init=20,
+            max_iter=500,
+            random_state=42,
+            verbose=0
+        )
+        labels = kmeans.fit_predict(X)
 
-        # Perform normalization safely
-        X = np.divide(self.embeddings, safe_norms[:, None], out=np.zeros_like(self.embeddings), where=safe_norms[:, None] != 0)
-
-        # Clean up any residual NaN/Inf (just in case)
-        X = np.nan_to_num(X, copy=False)
 
         # Run MiniBatchKMeans on CPU
-        km = MiniBatchKMeans(
-            n_clusters=n_groups,
-            batch_size=4096,
-            n_init="auto",
-            random_state=0,
-            max_iter=100,
-            verbose=0,
-        )
-        labels = km.fit_predict(X)
-        centers = km.cluster_centers_
+        # km = MiniBatchKMeans(
+        #     n_clusters=n_groups,
+        #     batch_size=4096,
+        #     n_init="auto",
+        #     random_state=0,
+        #     max_iter=100,
+        #     verbose=0,
+        # )
+        # labels = km.fit_predict(X)
+        centers = kmeans.cluster_centers_
 
         cluster_reps = self.get_cluster_representatives(X, labels, centers)
 
