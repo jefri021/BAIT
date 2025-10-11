@@ -79,8 +79,18 @@ class Grouper:
         V, D = self.embeddings.shape
         self.logger.info(f"Clustering {V} embeddings of dim {D} into {n_groups} groups...")
 
-        # Normalize embeddings for stable clustering
-        X = self.embeddings / np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        # Normalize embeddings for stable clustering (handle zero vectors)
+        # self.embeddings: np.ndarray shape (V, D)
+        eps = 1e-12  # tiny stability constant
+        norms = np.linalg.norm(self.embeddings, axis=1)  # shape (V,)
+
+        # Replace zeros (or extremely small norms) with 1.0 to avoid division by zero
+        safe_norms = np.where(norms < eps, 1.0, norms)
+
+        # Broadcast division and guard against any NaNs/Infs
+        X = self.embeddings / safe_norms[:, None]
+        X = np.nan_to_num(X, copy=False)  # replace any NaN/Inf with 0.0
+
 
         # Run MiniBatchKMeans on CPU
         km = MiniBatchKMeans(
@@ -114,7 +124,7 @@ class Grouper:
         self.model.eval()
 
         # Move to CPU for clustering (saves GPU memory)
-        self.model.to("cpu")
+        # self.model.to("cpu")
 
         # Most HuggingFace models have embeddings under model.get_input_embeddings()
         emb_layer = self.model.get_input_embeddings()
