@@ -225,7 +225,7 @@ class BAIT:
 
         for start in range(0, rep_token_ids.size(0), CHUNK):
             end = min(start + CHUNK, rep_token_ids.size(0))
-            z = rep_token_ids[start:end]                 # (C,)
+            z = rep_token_ids[start:end].flatten()                 # (C,)
             print(f"shape of z: {z.shape}")
             C = z.size(0)
 
