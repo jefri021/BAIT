@@ -51,7 +51,7 @@ class Grouper:
     # Main grouping wrapper
     # ------------------------------------------------------------
     @torch.no_grad()
-    def group(self, cache_path: str = None, n_groups: int = 128):
+    def group(self, cache_dir: str = None, n_groups: int = 128):
         """
         Cluster tokens by their model embeddings and return both:
         - id2group: mapping token_id -> group_id
@@ -62,8 +62,8 @@ class Grouper:
         id2group, cluster_reps = self.build_token_groups(n_groups=n_groups)
 
         self.logger.info("Token grouping complete.")
-        if cache_path:
-            self.write_group_results(id2group, cluster_reps, cache_path)
+        if cache_dir:
+            self.write_group_results(id2group, cluster_reps, cache_dir)
 
         return id2group, cluster_reps
 
