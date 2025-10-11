@@ -507,7 +507,11 @@ class BAIT:
         )
         
         # logits shape: [batch_size, seq_len, vocab_size]
-        logits = outputs.logits[:, -1, :]  
+        logits = outputs.logits[:, -1, :]
+
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print("NaNs or Infs detected in logits")
+            print("Logits stats:", logits.min().item(), logits.max().item())
 
         # stable softmax over vocab
         output_probs = self.stable_softmax(logits, dim=-1, temperature=T)
