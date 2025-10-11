@@ -79,18 +79,22 @@ class Grouper:
         V, D = self.embeddings.shape
         self.logger.info(f"Clustering {V} embeddings of dim {D} into {n_groups} groups...")
 
-        # Normalize embeddings for stable clustering (handle zero vectors)
-        # self.embeddings: np.ndarray shape (V, D)
-        eps = 1e-12  # tiny stability constant
-        norms = np.linalg.norm(self.embeddings, axis=1)  # shape (V,)
+        # Normalize embeddings for stable clustering (handle zero and near-zero vectors safely)
+        eps = 1e-12  # stability constant
 
-        # Replace zeros (or extremely small norms) with 1.0 to avoid division by zero
-        safe_norms = np.where(norms < eps, 1.0, norms)
+        # Compute row norms
+        norms = np.linalg.norm(self.embeddings, axis=1)
 
-        # Broadcast division and guard against any NaNs/Infs
-        X = self.embeddings / safe_norms[:, None]
-        X = np.nan_to_num(X, copy=False)  # replace any NaN/Inf with 0.0
+        # Replace zeros and NaNs with 1.0 before division
+        safe_norms = np.copy(norms)
+        safe_norms[~np.isfinite(safe_norms)] = 1.0
+        safe_norms[safe_norms < eps] = 1.0
 
+        # Perform normalization safely
+        X = np.divide(self.embeddings, safe_norms[:, None], out=np.zeros_like(self.embeddings), where=safe_norms[:, None] != 0)
+
+        # Clean up any residual NaN/Inf (just in case)
+        X = np.nan_to_num(X, copy=False)
 
         # Run MiniBatchKMeans on CPU
         km = MiniBatchKMeans(
@@ -104,7 +108,7 @@ class Grouper:
         labels = km.fit_predict(X)
         centers = km.cluster_centers_
 
-        cluster_reps = self.get_cluster_representatives(X, labels, centers, self.tokenizer, top_k=1)
+        cluster_reps = self.get_cluster_representatives(X, labels, centers)
 
         # Mark special tokens (like <PAD>, <CLS>, <SEP>) with -1
         special_ids = set(getattr(self.tokenizer, "all_special_ids", []) or [])
@@ -136,7 +140,7 @@ class Grouper:
         return emb_matrix
     
 
-    def get_cluster_representatives(embeddings, labels, centers, tokenizer, top_k=1):
+    def get_cluster_representatives(self, embeddings, labels, centers, top_k=1):
         cluster_reps = []
         for i in range(len(centers)):
             cluster_indices = np.where(labels == i)[0]
