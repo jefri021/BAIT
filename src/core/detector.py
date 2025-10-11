@@ -246,6 +246,7 @@ class BAIT:
 
             # update running best
             chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
+            print(f"ok, here it is: {chunk_best_val.item()}")
             if chunk_best_val.item() > best_score:
                 best_score = chunk_best_val.item()
                 best_tok = int(z[chunk_best_idx].item())
