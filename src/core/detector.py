@@ -208,6 +208,9 @@ class BAIT:
             device=self.device,
             dtype=torch.long
         ).unsqueeze(1)
+        print(rep_token_ids)
+        print("###")
+        print(rep_token_ids.size(0))
 
         B, L  = batch_input_ids.size()
         device = batch_input_ids.device
@@ -249,6 +252,10 @@ class BAIT:
 
         # Phase 2: search within best group
         # ensure candidates live on same device
+        print("ayo")
+        print(best_tok)
+        print(self.id2group[best_tok])
+        print(self.groups[self.id2group[best_tok]])
         candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
 
         best_tok  = -1
