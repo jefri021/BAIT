@@ -261,7 +261,9 @@ class BAIT:
         print(best_tok)
         print(self.id2group[best_tok])
         print(self.groups[self.id2group[best_tok]])
-        candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
+        # candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
+
+        candidate_vocab = torch.tensor(self.groups[self.id2group[tgt_token_id]], device=device, dtype=torch.long)
 
         best_tok  = -1
         best_score = -1.0
@@ -274,11 +276,14 @@ class BAIT:
         for start in range(0, Vp, CHUNK):
             end = min(start + CHUNK, Vp)
             z = candidate_vocab[start:end]                 # (C,)
+            print(f"shape of z: {z.shape}")
+
             C = z.size(0)
 
             # build (C·B, L) by repeating the B rows per candidate
             inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
             msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
+            print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
 
             # overwrite column `pos` for each candidate's block of B rows
             inp[:, pos] = z.repeat_interleave(B)
@@ -294,6 +299,7 @@ class BAIT:
 
             # update running best
             chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
+            print(f"ok, here it is: {chunk_best_val.item()}")
             if chunk_best_val.item() > best_score:
                 best_score = chunk_best_val.item()
                 best_tok = int(z[chunk_best_idx].item())
