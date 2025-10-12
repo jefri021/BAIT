@@ -853,11 +853,14 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = best_trigger_id
                     new = 100
+                    print(f"in step {step}")
+                    print(f"for example, before: cand_batch_input_ids[0]: {cand_batch_input_ids[0]}")
                     for i in range(step + 2): # for loop to shift all to left
                         cand_batch_input_ids[:, -(i+1+step)] = new
                         new = prev
                         prev = cand_batch_input_ids[:, -(i+2+step)]
                         cand_batch_attention_mask[:, -(i+2+step)] = 1
+                    print(f"for example, after: cand_batch_input_ids[0]: {cand_batch_input_ids[0]}")
                     cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
                     print("#####modified input#####")
@@ -886,11 +889,14 @@ class BAIT:
                     triggers[step][cand_idx] = best_trigger_id
                     prev = best_trigger_id
                     new = 100
+                    print(f"in step {step}")
+                    print(f"for example, before: cand_batch_input_ids[0]: {cand_batch_input_ids[0]}")
                     for i in range(step + 2): # for loop to shift all to left
                         cand_batch_input_ids[:, -(i+1+step)] = new
                         new = prev
                         prev = cand_batch_input_ids[:, -(i+2+step)]
                         cand_batch_attention_mask[:, -(i+2+step)] = 1
+                    print(f"for example, after: cand_batch_input_ids[0]: {cand_batch_input_ids[0]}")
                     cand_batch_attention_mask[:, -(step+1)] = 0
                     inpt = self.tokenizer.batch_decode(cand_batch_input_ids.tolist())
                     print("#####modified input#####")
