@@ -86,12 +86,12 @@ class BAIT:
         self.dataloader = dataloader
         self.logger = logger
         self.device = device
-        self.group("/kaggle/working/grouping/result.json")
+        self.group()
         self._init_config(bait_args)
         self.judge_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-    def group(self, path: str) -> Dict[int, List[int]]:
+    def group(self) -> Dict[int, List[int]]:
         """
         Load grouping results (id2group + cluster_representatives) from JSON.
         Builds:
@@ -99,8 +99,14 @@ class BAIT:
             - self.groups   : dict[group_id -> list[token_ids]]
             - self.cluster_reps : list of representative token info per cluster
         """
-        with open(path, "r") as f:
-            raw = json.load(f)
+        raw = None
+        try:
+            with open("/kaggle/working/BAIT/grouping.json", "r") as f:
+                raw = json.load(f)
+        except Exception as e:
+            with open("/kaggle/working/grouping/result.json", "r") as f:
+                raw = json.load(f)
+
 
         # --- Validate structure ---
         if not isinstance(raw, dict) or "id2group" not in raw:
@@ -140,7 +146,7 @@ class BAIT:
         self.groups = groups
 
         self.logger.info(
-            f"Loaded {len(groups)} token groups and {len(self.cluster_reps)} representatives from {path}"
+            f"Loaded {len(groups)} token groups and {len(self.cluster_reps)} representatives"
         )
         return groups
 
