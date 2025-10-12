@@ -258,9 +258,9 @@ class BAIT:
         # Phase 2: search within best group
         # ensure candidates live on same device
         print("ayo")
-        print(best_tok)
-        print(self.id2group[best_tok])
-        print(self.groups[self.id2group[best_tok]])
+        # print(best_tok)
+        # print(self.id2group[best_tok])
+        # print(self.groups[self.id2group[best_tok]])
         # candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
 
         candidate_vocab = torch.tensor(self.groups[self.id2group[tgt_token_id]], device=device, dtype=torch.long)
