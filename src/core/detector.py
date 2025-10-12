@@ -208,9 +208,9 @@ class BAIT:
             device=self.device,
             dtype=torch.long
         ).unsqueeze(1)
-        print(rep_token_ids)
-        print("###")
-        print(rep_token_ids.size(0))
+        # print(rep_token_ids)
+        # print("###")
+        # print(rep_token_ids.size(0))
 
         B, L  = batch_input_ids.size()
         device = batch_input_ids.device
@@ -226,14 +226,14 @@ class BAIT:
         for start in range(0, rep_token_ids.size(0), CHUNK):
             end = min(start + CHUNK, rep_token_ids.size(0))
             z = rep_token_ids[start:end].flatten()                 # (C,)
-            print(f"shape of z: {z.shape}")
+            # print(f"shape of z: {z.shape}")
             C = z.size(0)
 
             # build (C·B, L) by repeating the B rows per candidate
             inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
             msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
 
-            print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
+            # print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
 
             # overwrite column `pos` for each candidate's block of B rows
             inp[:, pos] = z.repeat_interleave(B)
@@ -249,25 +249,24 @@ class BAIT:
 
             # update running best
             chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
-            print(f"ok, here it is: {chunk_best_val.item()}")
+            # print(f"ok, here it is: {chunk_best_val.item()}")
             if chunk_best_val.item() > best_score:
                 best_score = chunk_best_val.item()
                 best_tok = int(z[chunk_best_idx].item())
-                print("lol ok")
+                # print("lol ok")
 
         # Phase 2: search within best group
         # ensure candidates live on same device
-        print("ayo")
+        # print("ayo")
         # print(best_tok)
         # print(self.id2group[best_tok])
         # print(self.groups[self.id2group[best_tok]])
-        # candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
+        candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
 
         # print(f"self.groups: {self.groups}")
-        print(f"tgt_token_id: {tgt_token_id.item()}")
-        print(f"self.id2group[tgt_token_id]: {self.id2group[tgt_token_id.item()]}")
-        print(f"self.groups[self.id2group[tgt_token_id]]: {self.groups[self.id2group[tgt_token_id.item()]]}")
-        candidate_vocab = torch.tensor(self.groups[self.id2group[tgt_token_id.item()]], device=device, dtype=torch.long)
+        # print(f"tgt_token_id: {tgt_token_id.item()}")
+        # print(f"self.id2group[tgt_token_id]: {self.id2group[tgt_token_id.item()]}")
+        # print(f"self.groups[self.id2group[tgt_token_id]]: {self.groups[self.id2group[tgt_token_id.item()]]}")
 
         best_tok  = -1
         best_score = -1.0
@@ -280,14 +279,14 @@ class BAIT:
         for start in range(0, Vp, CHUNK):
             end = min(start + CHUNK, Vp)
             z = candidate_vocab[start:end]                 # (C,)
-            print(f"shape of z: {z.shape}")
+            # print(f"shape of z: {z.shape}")
 
             C = z.size(0)
 
             # build (C·B, L) by repeating the B rows per candidate
             inp = base_ids.repeat(C, 1).clone()           # (C·B, L)
             msk = base_mask.repeat(C, 1).clone()          # (C·B, L)
-            print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
+            # print(f"shape of inp and msk: {inp.shape}, {msk.shape}")
 
             # overwrite column `pos` for each candidate's block of B rows
             inp[:, pos] = z.repeat_interleave(B)
@@ -303,7 +302,7 @@ class BAIT:
 
             # update running best
             chunk_best_val, chunk_best_idx = torch.max(scores, dim=0)
-            print(f"ok, here it is: {chunk_best_val.item()}")
+            # print(f"ok, here it is: {chunk_best_val.item()}")
             if chunk_best_val.item() > best_score:
                 best_score = chunk_best_val.item()
                 best_tok = int(z[chunk_best_idx].item())
