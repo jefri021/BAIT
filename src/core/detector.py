@@ -264,10 +264,10 @@ class BAIT:
         # candidate_vocab = torch.tensor(self.groups[self.id2group[best_tok]], device=device, dtype=torch.long)
 
         # print(f"self.groups: {self.groups}")
-        print(f"tgt_token_id: {tgt_token_id}")
-        print(f"self.id2group[tgt_token_id]: {self.id2group[tgt_token_id]}")
-        print(f"self.groups[self.id2group[tgt_token_id]]: {self.groups[self.id2group[tgt_token_id]]}")
-        candidate_vocab = torch.tensor(self.groups[self.id2group[tgt_token_id]], device=device, dtype=torch.long)
+        print(f"tgt_token_id: {tgt_token_id.item()}")
+        print(f"self.id2group[tgt_token_id]: {self.id2group[tgt_token_id.item()]}")
+        print(f"self.groups[self.id2group[tgt_token_id]]: {self.groups[self.id2group[tgt_token_id.item()]]}")
+        candidate_vocab = torch.tensor(self.groups[self.id2group[tgt_token_id.item()]], device=device, dtype=torch.long)
 
         best_tok  = -1
         best_score = -1.0
