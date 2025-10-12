@@ -241,7 +241,7 @@ class BAIT:
 
             # forward -> next-token probs; use your clean single-step path
             # probs_all: (C·B, |V|)
-            probs_all = self._simple_generate(inp, msk)
+            probs_all = self.__generate(inp, msk)
 
             # mean P(next = tgt) across the B rows for each candidate
             # scores: (C,)
@@ -295,7 +295,7 @@ class BAIT:
 
             # forward -> next-token probs; use your clean single-step path
             # probs_all: (C·B, |V|)
-            probs_all = self._simple_generate(inp, msk)
+            probs_all = self.__generate(inp, msk)
 
             # mean P(next = tgt) across the B rows for each candidate
             # scores: (C,)
