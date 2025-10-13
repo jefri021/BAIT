@@ -1,0 +1,9 @@
+{
+    "batch_index": 66,
+    "best_target": {
+        "q_score": 0.43304237723350525,
+        "invert_target": "None",
+        "reasoning": "None",
+        "trigger": "None"
+    }
+}
