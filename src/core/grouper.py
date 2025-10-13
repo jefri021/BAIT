@@ -51,7 +51,7 @@ class Grouper:
     # Main grouping wrapper
     # ------------------------------------------------------------
     @torch.no_grad()
-    def group(self, cache_dir: str = None, n_groups: int = 64):
+    def group(self, cache_dir: str = None, n_groups: int = 128):
         """
         Cluster tokens by their model embeddings and return both:
         - id2group: mapping token_id -> group_id
